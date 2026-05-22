@@ -1,0 +1,31 @@
+profiling_logs:
+  id: ID
+  module: Module
+  function: Function
+  message: Message
+  start_time: StartTime
+  end_time: EndTime
+  duration_ms: DurationMS
+  duration_readable: DurationText
+  hostname: Hostname
+  thread_id: ThreadID
+  status: Status
+  run_id: RunID
+  app_name: AppName
+  category: Category
+  created_at: CreatedDate
+  forecast_method_id: ForecastMethodID
+  forecast_method_name: ForecastMethodName
+  databrick_task_id: DatabricksTaskID
+  user_forecast_method_id: UserForecastMethodID
+  error: Error
+  traceback: Traceback
+
+profiling_errors:
+  profiling_log_id: ProfilingLogID
+  error: Error
+  traceback: Traceback
+  created_at: CreatedDate
+  severity: Severity
+  error_type: ErrorType
+  component: Component
