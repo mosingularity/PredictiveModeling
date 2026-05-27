@@ -28,7 +28,7 @@ logger.setLevel(logging.INFO)
 
 performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
 target_table_name = "dbo.ForecastFact"
-write_url = "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI;trustServerCertificate=true"
+write_url = "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI;trustServerCertificate=true"
 write_properties = {
     "driver": "com.microsoft.sqlserver.jdbc.SQLServerDriver"
 }
