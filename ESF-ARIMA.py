@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
-os.environ["ENV"] = "PROD"
+os.environ["ENV"] = "DEV"
 
 
 # COMMAND ----------
@@ -106,4 +106,5 @@ pipeline = ForecastPipeline(dataset=dataset,config=config)
 pipeline.run(spark)
 
 # COMMAND ----------
+
 

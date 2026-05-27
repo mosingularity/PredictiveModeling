@@ -38,7 +38,7 @@ def read_sql_query(query: str, spark: SparkSession, config_path: str = "config.y
         df = (
             spark.read.format("jdbc")
             # .option("url", jdbc_url)
-            .option("url", "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI")
+            .option("url", "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI")
             .option("query", query)
             .load()
         )
