@@ -8,7 +8,7 @@ import logging
 from py4j.protocol import Py4JNetworkError
 from socket import error as SocketError, timeout as SocketTimeout
 from config_loader import load_config 
-sys.path.append("/Workspace/Shared")
+sys.path.append("/Workspace/Shared/PredictiveModeling/")
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)

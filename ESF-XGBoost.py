@@ -4,12 +4,12 @@ import logging
 from py4j.protocol import Py4JNetworkError
 from socket import error as SocketError, timeout as SocketTimeout
 from config_loader import load_config 
-sys.path.append("/Workspace/Shared")
+sys.path.append("/Workspace/Shared/PredictiveModeling/")
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
-os.environ["ENV"] = "PROD"
+os.environ["ENV"] = "DEV"
 
 # COMMAND ----------
 
@@ -96,4 +96,5 @@ pipeline = ForecastPipeline(dataset=dataset,config=config)
 pipeline.run(spark)
 
 # COMMAND ----------
+
 
