@@ -1,2 +1,19 @@
 python library/
 databricks_support/
+
+# Local environment overrides — never commit
+.env
+.env.*
+!.env.example
+
+# VS Code workspace state
+.vscode/*.log
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Local conda/micromamba envs accidentally created in-tree
+dbx-connect/
