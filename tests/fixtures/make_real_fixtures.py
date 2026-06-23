@@ -1,7 +1,7 @@
 """Generate the scenario-triage fixture (``tidy_real.parquet``).
 
 A schema-valid tidy slice whose ``scenario`` / ``validation_reason`` marks are
-produced by the *actual* validator (``models.series_validator.validate_series``),
+produced by the *actual* validator (``validation.series.validate_series``),
 not hand-typed — so the triage figure's prevalence provably matches the
 validator's calls. One entity per data condition the validator can raise:
 
@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from evaluation.performance import PredictionUnit
-from models.series_validator import validate_series
+from validation.series import validate_series
 from results_analysis.tidy import validate_tidy
 
 HERE = os.path.dirname(os.path.abspath(__file__))

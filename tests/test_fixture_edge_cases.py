@@ -28,7 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from db.queries import ForecastConfig
 from evaluation.performance import EntityPerformanceData, UnbundledResults
-from models.series_validator import validate_series as _real_validate_series
+from validation.series import validate_series as _real_validate_series
 
 # ── load build_fixture.py (directory name has a hyphen, can't be imported normally) ──
 _BF_PATH = PROJECT_ROOT / "unbundled-modelling" / "scripts" / "build_fixture.py"

@@ -1,4 +1,4 @@
-"""Tests for models.series_validator.validate_series.
+"""Tests for validation.series.validate_series.
 
 Parametrised over the 7 cases documented in
 unbundled-modelling/plans/10-data-quality-preflight.md. Each case asserts both
@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from evaluation.performance import PredictionUnit
-from models.series_validator import validate_series
+from validation.series import validate_series
 
 # ── builders ────────────────────────────────────────────────────────────────
 

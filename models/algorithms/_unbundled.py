@@ -9,8 +9,8 @@ import logging
 from db.error_logger import report_validation_error
 from db.queries import get_predictive_data
 from evaluation.performance import PredictionUnit, UnbundledResults
-from models.series_validator import validate_series
-from profiler.errors.utils import get_error_metadata
+from validation.series import validate_series
+from validation.metadata import get_error_metadata
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,7 @@ logger.setLevel(logging.INFO)
 
 
 def invalid_length(series: pd.Series, consumption_type:str, period: int = 12):
-    from profiler.errors.utils import get_error_metadata
+    from validation.metadata import get_error_metadata
     from db.error_logger import report_validation_error
     if len(series) < period:
         meta = get_error_metadata("SplitConfigurationError", {
@@ -28,7 +28,7 @@ def invalid_length(series: pd.Series, consumption_type:str, period: int = 12):
 
 
 def invalid_series(pod_id: str,series: pd.Series, consumption_type:str, nunique: int = 1):
-    from profiler.errors.utils import get_error_metadata
+    from validation.metadata import get_error_metadata
     from db.error_logger import report_validation_error
 
     if series.isnull().all() or series.nunique() <= nunique:
@@ -46,7 +46,7 @@ def invalid_series(pod_id: str,series: pd.Series, consumption_type:str, nunique:
     else:
         return False
 def invalid_forecast_horizon(pod_id: str, series: pd.Series, consumption_type:str, forecast_horizon: pd.DatetimeIndex, gap_handling: str = 'skip'):
-    from profiler.errors.utils import get_error_metadata
+    from validation.metadata import get_error_metadata
     from db.error_logger import report_validation_error
     last_date = series.index[-1]
     forecast_start, forecast_end = forecast_horizon[0], forecast_horizon[-1]

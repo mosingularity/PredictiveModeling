@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from evaluation.performance import PredictionUnit
-from models.series_validator import validate_series
+from validation.series import validate_series
 
 # Single consumption column used to represent an aggregated bundle series.
 BUNDLE_CONSUMPTION_COLUMN = "TotalConsumption"

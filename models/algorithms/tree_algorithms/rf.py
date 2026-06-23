@@ -11,10 +11,11 @@ from models.algorithms.tree_algorithms.helper import engineer_data, split_train_
     recursive_forecast, plot_forecast
 from models.algorithms.utilities import  evaluate_predictions, process_reporting_months
 from models.algorithms._unbundled import run_unbundled
+from models.algorithms._bundled import run_bundled
 from models.base import ForecastModel
-from models.forecast_validation import run_forecast_sanity_checks
-from models.series_validator import validate_series, consumption_columns
-from profiler.errors.validation import invalid_length, invalid_series, invalid_forecast_horizon
+from validation.forecast import run_forecast_sanity_checks
+from validation.series import validate_series, consumption_columns
+from validation.input_checks import invalid_length, invalid_series, invalid_forecast_horizon
 
 # Setup logger with basic configuration
 logging.basicConfig(level=logging.INFO)
@@ -30,111 +31,12 @@ def forecast_rf_unbundled(model: ForecastModel, spark) -> UnbundledResults:
 
     
 
+def _forecast_rf_pod(pod_df, customer_id, pod_id, consumption_types, ufm_config, model):
+    return forecast_for_podel_id(pod_df, customer_id, pod_id, consumption_types, ufm_config)
+
+
 def forecast_rf_for_single_customer(model: ForecastModel, spark):
-    """
-    Function: Forecast Random Forest models for a single customer using information embedded in the model instance.
-
-    This function extracts all necessary parameters from the ForecastModel instance, including:
-      - The processed DataFrame from the ForecastDataset.
-      - The customer identifier.
-      - Forecast configuration and selected consumption columns.
-
-    It then:
-      1. Extracts hyperparameters (order and seasonal_order) using the configured model_parameters string.
-      2. Filters the data for the specific customer.
-      3. Iterates over unique pod IDs for the customer.
-      4. For each pod, trains a time series model and performs forecasting.
-      5. Aggregates the performance metrics into a consolidated DataFrame.
-    Args:
-        model (ForecastModel): An instance of ForecastModel (or subclass) containing all forecasting parameters.
-
-    Returns:
-        pd.DataFrame: Aggregated forecasting results in long format.
-    """
-    try:
-        forecast_method_id = getattr(model.dataset.ufm_config, "forecast_method_id", None)
-        # Step 1: Validate dataset
-        if model.dataset is None or model.dataset.processed_df is None:
-            meta = get_error_metadata("ModelConfigMissing", {"field": "dataset.df"})
-            report_validation_error(
-                log_id=None,
-                error=meta["message"],
-                traceback="",  # or traceback.format_exc()
-                error_type="ModelConfigMissing",
-                severity=meta["severity"],
-                component=meta["component"]
-            )
-            safe_exit(meta["code"], meta["message"])
-
-        if model.dataset.processed_df.empty:
-            meta = get_error_metadata("EmptySeries", {"forecast_method_id": forecast_method_id})
-            report_validation_error(
-                log_id=None,
-                error=meta["message"],
-                traceback="",  # or traceback.format_exc()
-                error_type="EmptySeries",
-                severity=meta["severity"],
-                component=meta["component"]
-            )
-            safe_exit(meta["code"], meta["message"])
-
-        df = model.dataset.processed_df
-        df = ensure_numeric_consumption_types(df, model)
-        unique_customers, unique_pod_ids = model.dataset.extract_unique_customers_and_pods()
-        ufm_config = model.dataset.ufm_config
-        consumption_types = getattr(model.dataset, 'variable_ids', None) or model.config.consumption_types
-
-        all_forecasts = []
-        rf_model_performances_dataframes: List[pd.DataFrame] = []
-        for customer_id in unique_customers:
-            customer_data = _get_customer_data(df, customer_id)
-            if customer_data.empty:
-                logger.warning(f"🚫 No data found for customer {customer_id}, skipping.")
-                continue
-
-            consumer_perf = CustomerPerformanceData(customer_id=customer_id, columns=consumption_types)
-            rf_rows: List[ModelPodPerformance] = []
-
-            unique_pod_ids = customer_data['PodID'].unique().tolist()
-            for pod_id in unique_pod_ids:
-                pod_df = customer_data[customer_data["PodID"] == pod_id].sort_values('ReportingMonth')
-                # logger.info(f"🚀 Forecasting Customer {customer_id}, Pod {pod_id}")
-                pod_perf = forecast_for_podel_id(pod_df, customer_id, pod_id, consumption_types, ufm_config)
-                consumer_perf.pod_by_id_performance.append(pod_perf)
-
-                # --- Performance Dataclass (Modularized) ---
-                mpp = _convert_to_model_performance_row(pod_perf, customer_id, pod_id, ufm_config)
-                rf_rows.append(mpp)
-
-                # --- Forecast DataFrame (Pandas) ---
-                forecast_df = _convert_forecast_map_to_df(pod_perf, customer_id, pod_id, ufm_config)
-                all_forecasts.append(forecast_df)
-                # logger.info(f"✅ Processed pod {pod_id} for customer {customer_id}.")
-
-            rf_performance_df = pd.DataFrame([m.to_row() for m in rf_rows])
-            rf_model_performances_dataframes.append(rf_performance_df)
-
-            # logger.info(f"✅ Forecast aggregation complete for {customer_id} complete.")
-
-        # Combine across all customers
-        rf_performance = pd.concat(rf_model_performances_dataframes).reset_index().drop(columns=['index'])
-        forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
-        run_forecast_sanity_checks(forecast_combined_df,rf_performance,consumption_types,model)
-        # return rf_performance, forecast_combined_df
-        jdbc_write(spark, forecast_combined_df, target_table_name)
-        jdbc_write(spark, rf_performance, performance_metrics_table)
-
-    except Exception as z:
-        meta = get_error_metadata("ModelFitFailure", {"exception": str(z)})
-        report_validation_error(
-            log_id=None,
-            error=meta["message"],
-            traceback="",  # or traceback.format_exc()
-            error_type="ModelFitFailure",
-            severity=meta["severity"],
-            component=meta["component"]
-        )
-        raise
+    return run_bundled(model, spark, _forecast_rf_pod)
 
 def forecast_for_podel_id(
     df: pd.DataFrame,

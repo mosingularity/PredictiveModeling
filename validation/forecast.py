@@ -5,7 +5,7 @@ import pandas as pd
 
 from db.error_logger import report_validation_error
 from models.base import ForecastModel
-from profiler.errors.utils import get_error_metadata
+from validation.metadata import get_error_metadata
 
 import logging
 

@@ -8,7 +8,7 @@ from pyspark.sql.functions import col, to_date, expr, explode, array, lit, when,
 from pyspark.sql.window import Window
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from profiler.errors.utils import get_error_metadata
+from validation.metadata import get_error_metadata
 from pyspark.sql import DataFrame as SparkDataFrame
 import pandas as pd
 

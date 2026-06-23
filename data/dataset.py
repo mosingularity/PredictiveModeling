@@ -16,7 +16,7 @@ from pyspark.sql.functions import col
 from IPython.display import display
 import logging
 from utils.exit_handler import safe_exit
-from profiler.errors.utils import get_error_metadata
+from validation.metadata import get_error_metadata
 from db.error_logger import report_validation_error
 
 class DatabricksNotebookHandler(logging.Handler):

@@ -10,14 +10,15 @@ from typing import Tuple, NamedTuple
 
 from db.error_logger import report_validation_error
 from db.utilities import jdbc_write
+from models.algorithms._bundled import run_bundled
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters
 from models.algorithms.helper import _convert_to_model_performance_row, \
     _convert_forecast_map_to_df, _get_customer_data, _collect_metrics, _apply_log, ensure_numeric_consumption_types
 from models.algorithms.utilities import prepare_time_series_data, evaluate_predictions
 from models.base import ForecastModel
-from models.forecast_validation import run_forecast_sanity_checks
-from models.series_validator import validate_series, consumption_columns
+from validation.forecast import run_forecast_sanity_checks
+from validation.series import validate_series, consumption_columns
 
 # Setup logger with basic configuration
 logging.basicConfig(level=logging.WARNING)
@@ -72,115 +73,16 @@ def predict_time_series_model(model, steps, return_ci=False, log = False):
         return mean_forecast, conf_int
     return mean_forecast
 
+def _forecast_arima_pod(pod_df, customer_id, pod_id, consumption_types, ufm_config, model):
+    order, seasonal_order = get_model_hyperparameters(
+        ufm_config.forecast_method_name, ufm_config.model_parameters)
+    return forecast_for_podel_id(
+        pod_df, order, customer_id, pod_id, consumption_types, ufm_config,
+        forecast_model=model, seasonal_order=seasonal_order)
+
+
 def forecast_arima_for_single_customer(model: ForecastModel, spark):
-    """
-    Function: Forecast ARIMA/SARIMA models for a single customer using information embedded in the model instance.
-
-    This function extracts all necessary parameters from the ForecastModel instance, including:
-      - The processed DataFrame from the ForecastDataset.
-      - The customer identifier.
-      - Forecast configuration and selected consumption columns.
-
-    It then:
-      1. Extracts hyperparameters (order and seasonal_order) using the configured model_parameters string.
-      2. Filters the data for the specific customer.
-      3. Iterates over unique pod IDs for the customer.
-      4. For each pod, trains a time series model and performs forecasting.
-      5. Aggregates the performance metrics into a consolidated DataFrame.
-    Args:
-        model (ForecastModel): An instance of ForecastModel (or subclass) containing all forecasting parameters.
-        log (bool, optional): Whether to apply log transformation. Defaults to False.
-
-    Returns:
-        pd.DataFrame: Aggregated forecasting results in long format.
-    """
-    try:
-        forecast_method_id = getattr(model.dataset.ufm_config, "forecast_method_id", None)
-        # Step 1: Validate dataset
-        if model.dataset is None or model.dataset.processed_df is None:
-            meta = get_error_metadata("ModelConfigMissing", {"field": "dataset.df"})
-            report_validation_error(
-                log_id=None,
-                error=meta["message"],
-                traceback="",  # or traceback.format_exc()
-                error_type="ModelConfigMissing",
-                severity=meta["severity"],
-                component=meta["component"]
-            )
-            safe_exit(meta["code"], meta["message"])
-
-        if model.dataset.processed_df.empty:
-            meta = get_error_metadata("EmptySeries", {"forecast_method_id": forecast_method_id})
-            report_validation_error(
-                log_id=None,
-                error=meta["message"],
-                traceback="",  # or traceback.format_exc()
-                error_type="EmptySeries",
-                severity=meta["severity"],
-                component=meta["component"]
-            )
-            safe_exit(meta["code"], meta["message"])
-
-        df = model.dataset.processed_df
-        df = ensure_numeric_consumption_types(df, model)
-        unique_customers, unique_pod_ids = model.dataset.extract_unique_customers_and_pods()
-        ufm_config = model.dataset.ufm_config
-        consumption_types = getattr(model.dataset, 'variable_ids', None) or model.config.consumption_types
-
-        order, seasonal_order = get_model_hyperparameters(ufm_config.forecast_method_name, ufm_config.model_parameters)
-        # logger.info(f"💡 Extracted hyperparameters: order={order}, seasonal_order={seasonal_order}")
-
-        all_forecasts = []
-        arima_model_performances_dataframes: List[pd.DataFrame] = []
-        for customer_id in unique_customers:
-            customer_data = _get_customer_data(df, customer_id)
-            if customer_data.empty:
-                logger.warning(f"🚫 No data found for customer {customer_id}, skipping.")
-                continue
-
-            consumer_perf = CustomerPerformanceData(customer_id=customer_id, columns=consumption_types)
-            arima_rows: List[ModelPodPerformance] = []
-
-            unique_pod_ids = customer_data['PodID'].unique().tolist()
-            for pod_id in unique_pod_ids:
-                pod_df = customer_data[customer_data["PodID"] == pod_id].sort_values('ReportingMonth')
-                # logger.info(f"🚀 Forecasting Customer {customer_id}, Pod {pod_id}")
-                pod_perf = forecast_for_podel_id(
-                    pod_df, order, customer_id, pod_id, consumption_types, ufm_config,
-                    forecast_model=model, seasonal_order=seasonal_order)
-                consumer_perf.pod_by_id_performance.append(pod_perf)
-                # --- Performance Dataclass (Modularized) ---
-                mpp = _convert_to_model_performance_row(pod_perf, customer_id, pod_id, ufm_config)
-                arima_rows.append(mpp)
-
-                # --- Forecast DataFrame (Pandas) ---
-                forecast_df = _convert_forecast_map_to_df(pod_perf, customer_id, pod_id, ufm_config)
-                all_forecasts.append(forecast_df)
-                # logger.info(f"✅ Processed pod {pod_id} for customer {customer_id}.")
-
-            arima_performance_df = pd.DataFrame([m.to_row() for m in arima_rows])
-            arima_model_performances_dataframes.append(arima_performance_df)
-
-            logger.info(f"✅ Forecast aggregation complete for {customer_id} complete.")
-
-        # Combine across all customers
-        arima_performance = pd.concat(arima_model_performances_dataframes).reset_index().drop(columns=['index'])
-        forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
-        run_forecast_sanity_checks(forecast_combined_df,arima_performance,consumption_types,model)
-        # return arima_performance, forecast_combined_df
-        jdbc_write(spark, forecast_combined_df, target_table_name)
-        jdbc_write(spark, arima_performance, performance_metrics_table)
-    except Exception as e:
-        meta = get_error_metadata("ModelFitFailure", {"exception": str(e)})
-        report_validation_error(
-            log_id=None,
-            error=meta["message"],
-            traceback="",  # or traceback.format_exc()
-            error_type="ModelFitFailure",
-            severity=meta["severity"],
-            component=meta["component"]
-        )
-        raise
+    return run_bundled(model, spark, _forecast_arima_pod)
 
 def forecast_arima_unbundled(model: ForecastModel, spark) -> UnbundledResults:
     ufm_config = model.dataset.ufm_config

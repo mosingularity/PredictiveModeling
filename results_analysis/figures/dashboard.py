@@ -4,7 +4,7 @@ Two builders for the two tabs, plus the entity-picker scenario index. None of
 them recompute anything: forecasts and the real ``RMSE/MAE/R²`` arrive via
 :func:`results_analysis.tidy.to_tidy` (fed by ``forecasting.engine``, which calls
 the real ``forecast_for_entity``), actuals come from the raw input frame, and the
-scenario marks come from the real ``models.series_validator.validate_series``.
+scenario marks come from the real ``validation.series.validate_series``.
 
 * :func:`build_forecast_figure` — Tab 1. Actual (solid) + each model's in-sample
   fit (solid) and future forecast (dotted), legend carrying the model's real
@@ -244,7 +244,7 @@ def entity_scenarios(raw_df: pd.DataFrame, method: str = "ARIMA") -> pd.DataFram
     picker to entities carrying a chosen condition rather than toggling a mode.
     """
     from evaluation.performance import PredictionUnit
-    from models.series_validator import validate_series
+    from validation.series import validate_series
 
     cols = [c for c in _CONSUMPTION_COLUMNS if c in raw_df.columns]
     rows = []
