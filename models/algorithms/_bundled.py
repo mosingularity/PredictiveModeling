@@ -80,6 +80,8 @@ def run_bundled(model: ForecastModel, spark, forecast_pod: Callable):
 
             model_performances_dataframes.append(pd.DataFrame([m.to_row() for m in perf_rows]))
 
+        logger.info(f"📊 Processed {len(unique_customers)} customer(s); "
+                    f"{len(all_forecasts)} pod-forecast(s) produced.")
         performance = pd.concat(model_performances_dataframes).reset_index().drop(columns=["index"])
         forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
         run_forecast_sanity_checks(forecast_combined_df, performance, consumption_types, model)

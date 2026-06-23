@@ -2,7 +2,6 @@ from data.dml import *
 import pandas as pd
 
 from db.error_logger import report_validation_error
-from db.utilities import jdbc_write
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters
 from models.algorithms.helper import _convert_to_model_performance_row, \

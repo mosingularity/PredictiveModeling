@@ -31,5 +31,8 @@ class ForecastPipeline:
         self.model = ForecastModel(dataset, config)
 
     def run(self, spark):
+        logger.info("🏃 Starting model fit + per-pod forecasting…")
         self.model.prepare_data()
-        return self.forecast_fn(self.model, spark)
+        result = self.forecast_fn(self.model, spark)
+        logger.info("🏁 Forecasting complete — forecast + performance tables written.")
+        return result

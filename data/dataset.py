@@ -60,7 +60,6 @@ class ForecastDataset:
         Raises: ValueError: If the data loaded from the database is empty.
         """
         self.user_forecast_data = get_user_forecast_data(self.spark, self.databrick_task_id)
-        logger.info("hello")
         if self.user_forecast_data is None or self.user_forecast_data.isEmpty():
             logger.error(f"🚫 User forecast data is empty")
             meta = get_error_metadata("EmptyConfigResult", {"databrick_task_id": self.databrick_task_id})
@@ -125,7 +124,7 @@ class ForecastDataset:
 
             # Defensive logging
             self.processed_df = self.raw_df  # Spark DataFrames are immutable
-            logger.info("✅ Data loaded and assigned to processed_df.")
+            logger.info(f"✅ Data loaded — {len(self.raw_df)} rows assigned to processed_df.")
 
         except Exception as e:
             logger.exception("❌ Exception in load_data()")

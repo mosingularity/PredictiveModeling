@@ -9,7 +9,6 @@ import pandas as pd
 from typing import Tuple, NamedTuple
 
 from db.error_logger import report_validation_error
-from db.utilities import jdbc_write
 from models.algorithms._bundled import run_bundled
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters

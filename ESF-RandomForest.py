@@ -29,19 +29,16 @@ try:
     from config_loader import load_config  # your existing config loader module
     from data.dataset import ForecastDataset
     from programs.pipeline import ForecastPipeline
+    logger.info("✅ Core imports OK (pyspark, ForecastDataset, ForecastPipeline).")
 except (ConnectionResetError, SocketError, SocketTimeout) as e:
-        logger.error(
-            f"❌ Connection error during Spark operation: {type(e).__name__} — {str(e)}"
-        )
+    logger.error(f"❌ Connection error during import: {type(e).__name__} — {e}")
+    raise
 except Py4JNetworkError as e:
-    logger.error(
-        f"🔥 Py4JNetworkError during Spark operation:\n"
-    )
+    logger.error(f"🔥 Py4JNetworkError during import: {type(e).__name__} — {e}")
+    raise
 except Exception as e:
-    # Catch absolutely everything else
-    logger.error(
-        f"🚨 Unexpected error during Spark operation:\n"
-    )
+    logger.error(f"🚨 Import failed — pipeline/dataset unavailable: {type(e).__name__} — {e}")
+    raise
 
 # COMMAND ----------
 

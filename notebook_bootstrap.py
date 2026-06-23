@@ -9,7 +9,10 @@ ENV resolution lives at import-callers' top cells via ``resolve_env()``:
 an explicitly-injected ENV always wins; otherwise PROD on a cluster
 (``DATABRICKS_RUNTIME_VERSION`` set), DEV locally (databricks-connect).
 """
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 DEV_WORKSPACE_ID = "adb-7405614865299820"
 
@@ -19,6 +22,8 @@ def resolve_env():
     os.environ.setdefault(
         "ENV", "PROD" if os.environ.get("DATABRICKS_RUNTIME_VERSION") else "DEV"
     )
+    where = "cluster" if os.environ.get("DATABRICKS_RUNTIME_VERSION") else "local databricks-connect"
+    logger.info(f"🌍 ENV resolved to {os.environ['ENV']} ({where}).")
 
 
 def init_spark():
@@ -35,6 +40,11 @@ def init_spark():
     except Exception:
         # Unsupported on Shared-access clusters / via databricks-connect.
         pass
+    try:
+        ws = spark.conf.get("spark.databricks.workspaceUrl", "<unknown>")
+    except Exception:
+        ws = "<unknown>"
+    logger.info(f"⚡ Spark session ready — workspace '{ws}'.")
     return spark, DBUtils(spark)
 
 
