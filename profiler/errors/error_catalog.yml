@@ -125,6 +125,12 @@ ParameterGridInvalid:
   severity: high
   component: hyperparameter_config
 
+SeriesValidationFailed:
+  code: E6017
+  message: "Series validation failed for entity {entity_id}: {reason}"
+  severity: medium
+  component: model_training
+
 
 UnknownError:
   code: E9999

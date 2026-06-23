@@ -22,58 +22,18 @@ driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
 DEV:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
 
 UAT:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-uat-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
 
 QA:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-qa-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
 
 PROD:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
-
-LOCAL:
-  profiler:
-    driver: "{MariaDB ODBC 3.2 Driver}"
-    host: "localhost"
-    port: 3306
-    user: "root"
-    password: "*"
-    database: "PLAYGROUND"
-  profiling_cfg:
-    engine: sqlserver        # or sqlserver
-    datasource: UAT        # targets DEV data while profiling locally
-
-profiling:
-  enabled: false
-  log_errors: false
-  app_name: forecasting-engine
-
-  categories: # https://www.notion.so/YAML-Based-Validation-System-for-Profiling-Categories-1ed650487ec480a0b9e8d6046a249e36?pvs=4#1ed650487ec480bebc92ca52fe76bb6e
-    - dataset # Handles application-level logic (e.g., validating results, converting to objects)
-    - database_call # Handles the database query logic
-    - extract_transform_and_load
-    - feature_engineering
-    - model_training
-    - forecasting
-    - evaluation
-    - config
-    - validation
-    - orchestration
-    - storage
-    - error_handling
-
 
 # Read data from SQL Server
 tables:

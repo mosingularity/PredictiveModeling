@@ -1,5 +1,0 @@
-ENV=databricks
-DB_USER=fortrackSQL
-DB_PASSWORD=x
-WRITE_TO_SQL=false
-DATABRICK_TASK_ID=1

@@ -2,7 +2,6 @@ import logging
 
 import pandas as pd
 
-from models.algorithms.XGBoost import train_XGBoost_globally_forecast_locally_with_aggregation
 from models.algorithms.tree_algorithms.xgb import forecast_xgb_for_single_customer
 from models.base import ForecastModel
 
@@ -12,7 +11,6 @@ logger.setLevel(logging.INFO)
 class XGBoostModel(ForecastModel):
     def train(self, spark) -> pd.DataFrame:
         logger.info("🚀 [XGBoostModel] Starting training...")
-        # result = train_XGBoost_globally_forecast_locally_with_aggregation(self, spark)
         result = forecast_xgb_for_single_customer(self, spark)
         logger.info("✅ [XGBoostModel] Training complete.")
         return result

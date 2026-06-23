@@ -140,11 +140,19 @@ def _aggregate_forecast_outputs(consumer_perf, arima_rows, all_forecasts):
 
 
 
-def _collect_metrics(pod_id, customer_id, consumption_type, forecast, metrics=None, baseline_metrics=None):
-    row = {'pod_id': pod_id, 'customer_id': customer_id, 'consumption_type': consumption_type, 'forecast': forecast}
+def _collect_metrics(pod_id, customer_id, consumption_type, forecast, metrics=None, baseline_metrics=None, in_sample=None):
+    # ``in_sample`` is the model's in-sample/backtest prediction Series (indexed by
+    # historical ReportingMonth) that the metrics were scored on. It is computed
+    # anyway during evaluation; carrying it lets the results layer draw each
+    # model's fitted-history line. Additive — None for the skip/zero paths.
+    row = {'pod_id': pod_id, 'customer_id': customer_id, 'consumption_type': consumption_type,
+           'forecast': forecast, 'in_sample': in_sample}
+    # A skipped/failed fit carries no metrics — record NaN, not 0.0. A fake 0.0
+    # reads as a perfect score and silently deflates any RMSE_Avg it's mixed into;
+    # NaN is the honest "unscored" signal the results layer keys off.
     for metric in ['RMSE', 'MAE', 'R2']:
-        row[metric] = metrics.get(metric) if metrics else 0.0
-        row[f'{metric}_baseline'] = baseline_metrics.get(metric) if baseline_metrics else 0.0
+        row[metric] = (metrics or {}).get(metric, float("nan"))
+        row[f'{metric}_baseline'] = (baseline_metrics or {}).get(metric, float("nan"))
     return row
 
 def _plot_forecast(series, forecast, validation, final_test):

@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
-os.environ["ENV"] = "DEV"
+from notebook_bootstrap import (resolve_env, init_spark, assert_local_workspace,
+                                 resolve_task_id, save_fixture, run_unbundled_fixture)
+# ENV picks the config.yaml section and DB host. An explicit ENV always wins;
+# otherwise DEV locally (databricks-connect), PROD on a Databricks cluster.
+resolve_env()
 
 
 # COMMAND ----------
@@ -31,7 +35,6 @@ try:
     from utils.dbutils_singleton import set_dbutils
     from config_loader import load_config  # your existing config loader module
     from data.dataset import ForecastDataset
-    from profiler.profiler_run import run_context
     from programs.pipeline import ForecastPipeline
 except (ConnectionResetError, SocketError, SocketTimeout) as e:
         logger.error(
@@ -58,19 +61,17 @@ config = load_config("config.yaml") # Forecast config
 
 # COMMAND ----------
 
-def init_spark():
-    spark = SparkSession.builder.appName("Energy Consumption Prediction").getOrCreate()
-    spark.sparkContext.setLogLevel("ERROR")
-    dbutils = DBUtils(spark)
-    return spark, dbutils
-
+# Unbundled local-fixture escape hatch: `--mode unbundled` + PREDICTIVE_FIXTURE_PATH
+# runs the per-entity forecaster on a parquet fixture and exits; otherwise no-op.
+from models.algorithms.autoarima import forecast_arima_unbundled
+run_unbundled_fixture(1, "ARIMA", forecast_arima_unbundled, config)
 
 # COMMAND ----------
 
 spark, dbutils = init_spark()
-set_dbutils(dbutils) 
-databrick_task_id = int(dbutils.widgets.get("DatabrickTaskID"))
-databrick_task_id
+set_dbutils(dbutils)
+assert_local_workspace(spark)
+databrick_task_id = resolve_task_id(dbutils)
 
 
 # COMMAND ----------
@@ -88,6 +89,10 @@ dataset.ufm_config
 # COMMAND ----------
 
 dataset.load_data()
+
+# COMMAND ----------
+
+save_fixture(dataset)
 
 # COMMAND ----------
 

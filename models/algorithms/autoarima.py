@@ -8,7 +8,8 @@ from data.dml import *
 import pandas as pd
 from typing import Tuple, NamedTuple
 
-from db.error_logger import insert_profiling_error
+from db.error_logger import report_validation_error
+from db.utilities import jdbc_write
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters
 from models.algorithms.helper import _convert_to_model_performance_row, \
@@ -16,6 +17,7 @@ from models.algorithms.helper import _convert_to_model_performance_row, \
 from models.algorithms.utilities import prepare_time_series_data, evaluate_predictions
 from models.base import ForecastModel
 from models.forecast_validation import run_forecast_sanity_checks
+from models.series_validator import validate_series, consumption_columns
 
 # Setup logger with basic configuration
 logging.basicConfig(level=logging.WARNING)
@@ -26,10 +28,6 @@ warnings.filterwarnings("ignore", category=ConvergenceWarning)
 
 performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
 target_table_name = "dbo.ForecastFact"
-write_url = "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI;trustServerCertificate=true"
-write_properties = {
-    "driver": "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-}
 
 
 
@@ -49,7 +47,10 @@ def train_arima_model(series: pd.Series, order: Tuple[int, int, int], log: bool 
     # logger.info("🔧 Training ARIMA")
     series = _apply_log(series, log)
     model = ARIMA(series, order=order, exog=exog)
-    return model.fit(method_kwargs={"maxiter": 500}, disp=False)
+    # NB: tsa.arima.model.ARIMA.fit() has no `disp` arg — it goes in method_kwargs
+    # (SARIMAX.fit below takes it directly). Passing it directly here silently
+    # crashes every ARIMA fit into the zero-fallback.
+    return model.fit(method_kwargs={"maxiter": 500, "disp": False})
 
 
 def train_sarima_model(series: pd.Series, order: Tuple[int, int, int], seasonal_order: Tuple[int, int, int, int], log: bool = False, endog: Optional[pd.DataFrame] = None, exog: Optional[pd.DataFrame] = None):
@@ -71,7 +72,6 @@ def predict_time_series_model(model, steps, return_ci=False, log = False):
         return mean_forecast, conf_int
     return mean_forecast
 
-@profiled_function(category="model_training",enabled=profiling_switch.enabled)
 def forecast_arima_for_single_customer(model: ForecastModel, spark):
     """
     Function: Forecast ARIMA/SARIMA models for a single customer using information embedded in the model instance.
@@ -99,7 +99,7 @@ def forecast_arima_for_single_customer(model: ForecastModel, spark):
         # Step 1: Validate dataset
         if model.dataset is None or model.dataset.processed_df is None:
             meta = get_error_metadata("ModelConfigMissing", {"field": "dataset.df"})
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -111,7 +111,7 @@ def forecast_arima_for_single_customer(model: ForecastModel, spark):
 
         if model.dataset.processed_df.empty:
             meta = get_error_metadata("EmptySeries", {"forecast_method_id": forecast_method_id})
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -168,11 +168,11 @@ def forecast_arima_for_single_customer(model: ForecastModel, spark):
         forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
         run_forecast_sanity_checks(forecast_combined_df,arima_performance,consumption_types,model)
         # return arima_performance, forecast_combined_df
-        write_to_spark(spark, forecast_combined_df, target_table_name)
-        write_to_spark(spark, arima_performance, performance_metrics_table)
+        jdbc_write(spark, forecast_combined_df, target_table_name)
+        jdbc_write(spark, arima_performance, performance_metrics_table)
     except Exception as e:
         meta = get_error_metadata("ModelFitFailure", {"exception": str(e)})
-        insert_profiling_error(
+        report_validation_error(
             log_id=None,
             error=meta["message"],
             traceback="",  # or traceback.format_exc()
@@ -182,13 +182,45 @@ def forecast_arima_for_single_customer(model: ForecastModel, spark):
         )
         raise
 
-def write_to_spark(spark, dataframe, target_table):
-    try:
-        spark.createDataFrame(dataframe).write.jdbc(url=write_url, table=target_table, mode="append",properties=write_properties)
-        logger.info(f"✅ Successfully wrote {len(dataframe)} rows to x{target_table}")
-    except Exception as e:
-        logger.info(f"🚫 Failed to write to {target_table}")
-        safe_exit("E0000", f"Failed to write to {target_table}")
+def forecast_arima_unbundled(model: ForecastModel, spark) -> UnbundledResults:
+    ufm_config = model.dataset.ufm_config
+    order, seasonal_order = get_model_hyperparameters(ufm_config.forecast_method_name, ufm_config.model_parameters)
+    data = get_predictive_data(spark, ufm_config.user_forecast_method_id)
+    results = UnbundledResults(forecast_method_name=ufm_config.forecast_method_name)
+    for (tariff_type, entity_id), group in data.groupby(["TariffType", "EntityID"]):
+        series = group.set_index("ReportingMonth").sort_index()
+        if "PodID" not in series.columns:
+            series = series.copy()
+            series["PodID"] = entity_id
+        unit = PredictionUnit(
+            entity_id=entity_id,
+            entity_type=group["EntityType"].iloc[0],
+            tariff_type=tariff_type,
+            # Real unbundled exports (Ermelo) are entity-keyed and carry no
+            # CustomerID; it is reporting metadata only, so default to "" when absent.
+            customer_id=str(group["CustomerID"].iloc[0]) if "CustomerID" in group.columns else "",
+            tariff_id=group["TariffID"].iloc[0],
+            series=series,
+        )
+        ok, reason = validate_series(unit, ufm_config.forecast_method_name)
+        if not ok:
+            meta = get_error_metadata("SeriesValidationFailed", {"entity_id": entity_id, "reason": reason})
+            report_validation_error(
+                log_id=None,
+                error=meta["message"],
+                traceback="",
+                error_type="SeriesValidationFailed",
+                severity=meta["severity"],
+                component=meta["component"],
+            )
+            continue
+        if reason != "ok":
+            logger.warning(f"⚠️ Series validation warning for entity {entity_id}: {reason}")
+        result = forecast_for_entity(unit, order, ufm_config, model, seasonal_order)
+        results.entity_performance.append(result)
+    return results
+
+
 
 def plot_prediction(series, future_forecast, consumption_type):
     plt.figure()
@@ -210,10 +242,16 @@ def forecast_for_podel_id(
     ufm_config,
     forecast_model: ForecastModel,
     seasonal_order: Optional[Tuple[int, int, int, int]] = None,
-    gap_handling: str = "skip"
+    gap_handling: str = "skip",
+    backtest_months: Optional[int] = None,
 ) -> PodIDPerformanceData:
     """
     Refactored forecasting function handling in-sample, out-of-sample, and future forecasts.
+
+    ``backtest_months`` sets the held-out window the in-sample metrics are scored
+    on. Defaults to the forecast horizon (legacy behaviour); pass an explicit value
+    to decouple scoring from how far ahead you forecast and to keep the window
+    comparable across models.
     """
     data = []
     forecast_horizon = get_forecast_range(ufm_config)
@@ -224,7 +262,7 @@ def forecast_for_podel_id(
         series = prepare_time_series_data(pod_df, consumption_type)
         if series.isnull().all() or series.nunique() <= 1:
             meta = get_error_metadata("InvalidSeries", {"pod_id": pod_id, "consumption_type":consumption_type})
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -242,7 +280,7 @@ def forecast_for_podel_id(
                 "series_length": len(series),
                 "consumption_type": consumption_type
             })
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -268,7 +306,7 @@ def forecast_for_podel_id(
                     "last_observed": str(last_date.date()),
                     "requested_start": str(forecast_start.date())
                 })
-                insert_profiling_error(
+                report_validation_error(
                     log_id=None,
                     error=meta["message"],
                     traceback="",  # or traceback.format_exc()
@@ -294,7 +332,7 @@ def forecast_for_podel_id(
                 # logger.warning(
                 #     f"⚠️ Forecast for Pod {pod_id}, {consumption_type} is flat. Model may be underfit or data insufficient. Please try different parameters (e.g (2,1,2)) or a different model")
                 meta = get_error_metadata("FlatForecast", {"gap_months": gap_months, "last_date":last_date.date(),"forecast_start":forecast_start.date(), "pod_id": pod_id,"consumption_type": consumption_type})
-                insert_profiling_error(
+                report_validation_error(
                     log_id=None,
                     error=meta["message"],
                     traceback="",  # or traceback.format_exc()
@@ -305,23 +343,41 @@ def forecast_for_podel_id(
             if forecast_model.config.log:
                 future_forecast = np.exp(future_forecast)
             # plot_prediction(series, future_forecast, consumption_type)
-            # Evaluate on last portion of real data
-            evaluation_window = min(steps, len(series))
+            # Honest OUT-OF-SAMPLE backtest: refit on the training portion only and
+            # forecast the held-out window — not an in-sample predict of months the
+            # full-data model already saw. This matches the trees' train/test regime
+            # so the metrics are comparable across all four models. Metrics are NaN
+            # (unscored) when the training portion is too short to backtest.
+            evaluation_window = min(backtest_months or steps, len(series))
             test_actual = series[-evaluation_window:]
-            test_pred = model.predict(start=test_actual.index[0], end=test_actual.index[-1])
+            train = series.iloc[:-evaluation_window]
+            metrics, baseline_metrics = None, None
+            if len(train) >= max(evaluation_window, 4):
+                try:
+                    bt_model = fit_time_series_model(
+                        train, order, seasonal_order, log=forecast_model.config.log)
+                    bt_pred = bt_model.get_forecast(steps=evaluation_window).predicted_mean
+                    if forecast_model.config.log:
+                        bt_pred = np.exp(bt_pred)
+                    bt_pred.index = test_actual.index
+                    metrics, baseline_metrics = evaluate_predictions(test_actual, bt_pred)
+                except Exception:
+                    metrics, baseline_metrics = None, None
+            # Full-history in-sample fitted line for the diagnostic overlay (the solid
+            # "predicted historical" line), from the full-data model — display only.
+            in_sample_fit = model.predict(start=series.index[0], end=series.index[-1])
             if forecast_model.config.log:
-                test_pred = np.exp(test_pred)
-            metrics, baseline_metrics = evaluate_predictions(test_actual, test_pred)
+                in_sample_fit = np.exp(in_sample_fit)
             if gap_handling == "fill":
                 future_forecast = future_forecast[future_forecast.index.isin(forecast_horizon)].copy()
                 future_forecast = future_forecast.reindex(forecast_horizon).dropna()
             data.append(_collect_metrics(
                 pod_id, customer_id, consumption_type,
-                future_forecast, metrics, baseline_metrics
+                future_forecast, metrics, baseline_metrics, in_sample=in_sample_fit
             ))
         except Exception as e:
             meta = get_error_metadata("ModelFitFailure", {"exception": str(e)})
-            insert_profiling_error(log_id=None, error=meta["message"], traceback="",  error_type="ModelFitFailure",severity=meta["severity"], component=meta["component"])
+            report_validation_error(log_id=None, error=meta["message"], traceback="",  error_type="ModelFitFailure",severity=meta["severity"], component=meta["component"])
             forecast = pd.Series([0] * steps, index=forecast_horizon)
             data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
             continue
@@ -331,4 +387,43 @@ def forecast_for_podel_id(
         customer_id=customer_id,
         user_forecast_method_id=ufm_config.user_forecast_method_id,
         performance_data_frame=pd.DataFrame(data)
+    )
+
+
+def forecast_for_entity(
+    unit: PredictionUnit,
+    order: Tuple[int, int, int],
+    ufm_config,
+    forecast_model: ForecastModel,
+    seasonal_order: Optional[Tuple[int, int, int, int]] = None,
+    gap_handling: str = "skip",
+    backtest_months: Optional[int] = None,
+) -> EntityPerformanceData:
+    """
+    Entity-aware wrapper around forecast_for_podel_id for the unbundled path.
+    Accepts a PredictionUnit (carrying entity_id, entity_type, tariff_type) and
+    returns EntityPerformanceData instead of PodIDPerformanceData.
+    """
+    consumption_types = consumption_columns(unit.series)
+    pod_perf = forecast_for_podel_id(
+        df=unit.series,
+        order=order,
+        customer_id=unit.customer_id,
+        pod_id=unit.entity_id,
+        consumption_types=consumption_types,
+        ufm_config=ufm_config,
+        forecast_model=forecast_model,
+        seasonal_order=seasonal_order,
+        gap_handling=gap_handling,
+        backtest_months=backtest_months,
+    )
+    return EntityPerformanceData(
+        entity_id=unit.entity_id,
+        entity_type=unit.entity_type,
+        tariff_type=unit.tariff_type,
+        customer_id=unit.customer_id,
+        forecast_method_name=ufm_config.forecast_method_name,
+        user_forecast_method_id=ufm_config.user_forecast_method_id,
+        performance_data_frame=pod_perf.performance_data_frame,
+        tariff_id=unit.tariff_id,
     )

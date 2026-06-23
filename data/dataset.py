@@ -16,10 +16,8 @@ from pyspark.sql.functions import col
 from IPython.display import display
 import logging
 from utils.exit_handler import safe_exit
-from profiler.profiler_switch import profiling_switch
 from profiler.errors.utils import get_error_metadata
-from docstring.utilities import profiled_function
-from db.error_logger import insert_profiling_error
+from db.error_logger import report_validation_error
 
 class DatabricksNotebookHandler(logging.Handler):
     def emit(self, record):
@@ -55,7 +53,6 @@ class ForecastDataset:
         self.unique_pod_ids: list = []
         self.forecast_dates = []
     
-    @profiled_function(category="dataset",enabled=profiling_switch.enabled)
     def load_ufm_config(self) -> ForecastConfig:
         """
         Function: Retrieve user forecast configuration from database and store configuration results in an object variable.
@@ -64,11 +61,11 @@ class ForecastDataset:
         """
         self.user_forecast_data = get_user_forecast_data(self.spark, self.databrick_task_id)
         logger.info("hello")
-        if self.user_forecast_data is None or self.user_forecast_data.rdd.isEmpty():
+        if self.user_forecast_data is None or self.user_forecast_data.isEmpty():
             logger.error(f"🚫 User forecast data is empty")
             meta = get_error_metadata("EmptyConfigResult", {"databrick_task_id": self.databrick_task_id})
             logger.info(f"💈 This is what is inside the meta: {meta}")
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -86,7 +83,7 @@ class ForecastDataset:
             logger.error(f"🚫 Failed to convert row to ForecastConfig: {e}")
             meta = get_error_metadata("EmptyConfigResult", {"databrick_task_id": self.databrick_task_id})
             logger.info(f"💈 This is what is inside the meta: {meta}")
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -97,14 +94,6 @@ class ForecastDataset:
             safe_exit(meta["code"], meta["message"])
         
 
-    @profiled_function(category="dataset",enabled=profiling_switch.enabled)
-    def _load_ufm_config(self) -> ForecastConfig:
-        first_row = self.user_forecast_data.limit(1).collect()[0]
-        config = row_to_config(first_row.asDict())
-        logger.info(f"✅ Loaded UFM config: {config}")
-        return config
-
-    @profiled_function(category="dataset",enabled=profiling_switch.enabled)
     def load_data(self) -> None:
         """
         Function: Perform dbo.PredictiveInputData() to fetch and filter data from the database
@@ -124,7 +113,7 @@ class ForecastDataset:
                 meta = get_error_metadata("EmptyQueryResult", {
                     "forecast_method_id": self.ufm_config.forecast_method_id
                 })
-                insert_profiling_error(
+                report_validation_error(
                     log_id=None,
                     error=meta["message"],
                     traceback="",  # or traceback.format_exc()
@@ -144,7 +133,7 @@ class ForecastDataset:
                 "forecast_method_id": self.ufm_config.forecast_method_id,
                 "exception": str(e)
             })
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback=traceback.format_exc(),

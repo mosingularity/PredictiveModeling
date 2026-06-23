@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-from db.error_logger import insert_profiling_error
+from db.error_logger import report_validation_error
 from models.base import ForecastModel
 from profiler.errors.utils import get_error_metadata
 
@@ -53,7 +53,7 @@ def run_forecast_sanity_checks(
     # Forecast Output Check
     if not validate_nonzero_forecast(forecast_df, consumption_types):
         meta = get_error_metadata("AllZeroForecast", {"databrick_id": ufm_config.databrick_task_id,"ufmid": ufm_config.forecast_method_id})
-        insert_profiling_error(
+        report_validation_error(
             log_id=None,
             error=meta["message"],
             traceback="",  # or traceback.format_exc()
@@ -71,7 +71,7 @@ def run_forecast_sanity_checks(
             "customer_ids": unique_customers,
             "metric_columns": performance_columns
         })
-        insert_profiling_error(
+        report_validation_error(
             log_id=None,
             error=meta["message"],
             traceback="",  # or traceback.format_exc()

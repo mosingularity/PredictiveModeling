@@ -1,7 +1,8 @@
 from data.dml import *
 import pandas as pd
 
-from db.error_logger import insert_profiling_error
+from db.error_logger import report_validation_error
+from db.utilities import jdbc_write
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters
 from models.algorithms.helper import _convert_to_model_performance_row, \
@@ -9,8 +10,10 @@ from models.algorithms.helper import _convert_to_model_performance_row, \
 from models.algorithms.tree_algorithms.helper import engineer_data, split_train_test, plot_train_test, \
     recursive_forecast, plot_forecast, train_xgb
 from models.algorithms.utilities import  evaluate_predictions, process_reporting_months
+from models.algorithms._unbundled import run_unbundled
 from models.base import ForecastModel
 from models.forecast_validation import run_forecast_sanity_checks
+from models.series_validator import validate_series, consumption_columns
 from profiler.errors.validation import invalid_length, invalid_series, invalid_forecast_horizon
 
 # Setup logger with basic configuration
@@ -20,21 +23,13 @@ logger.setLevel(logging.INFO)
 
 performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
 target_table_name = "dbo.ForecastFact"
-write_url = "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI;trustServerCertificate=true"
-write_properties = {
-    "driver": "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-}
 
-def write_to_spark(spark, dataframe, target_table):
-    try:
-        spark.createDataFrame(dataframe).write.jdbc(url=write_url, table=target_table, mode="append",properties=write_properties)
-        logger.info(f"✅ Successfully wrote {len(dataframe)} rows to x{target_table}")
-    except Exception as e:
-        logger.info(f"🚫 Failed to write to {target_table}")
-        safe_exit("E0000", f"Failed to write to {target_table}")
+def forecast_xgb_unbundled(model: ForecastModel, spark) -> UnbundledResults:
+    return run_unbundled(model, spark, forecast_for_entity)
+
+
     
 
-@profiled_function(category="model_training",enabled=profiling_switch.enabled)
 def forecast_xgb_for_single_customer(model: ForecastModel, spark):
     """
     Function: Forecast XGBoost models for a single customer using information embedded in the model instance.
@@ -61,7 +56,7 @@ def forecast_xgb_for_single_customer(model: ForecastModel, spark):
         # Step 1: Validate dataset
         if model.dataset is None or model.dataset.processed_df is None:
             meta = get_error_metadata("ModelConfigMissing", {"field": "dataset.df"})
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -73,7 +68,7 @@ def forecast_xgb_for_single_customer(model: ForecastModel, spark):
 
         if model.dataset.processed_df.empty:
             meta = get_error_metadata("EmptySeries", {"forecast_method_id": forecast_method_id})
-            insert_profiling_error(
+            report_validation_error(
                 log_id=None,
                 error=meta["message"],
                 traceback="",  # or traceback.format_exc()
@@ -126,11 +121,11 @@ def forecast_xgb_for_single_customer(model: ForecastModel, spark):
         forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
         run_forecast_sanity_checks(forecast_combined_df,xgb_performance,consumption_types,model)
         # return xgb_performance, forecast_combined_df
-        write_to_spark(spark, forecast_combined_df, target_table_name)
-        write_to_spark(spark, xgb_performance, performance_metrics_table)
+        jdbc_write(spark, forecast_combined_df, target_table_name)
+        jdbc_write(spark, xgb_performance, performance_metrics_table)
     except Exception as z:
         meta = get_error_metadata("ModelFitFailure", {"exception": str(z)})
-        insert_profiling_error(
+        report_validation_error(
             log_id=None,
             error=meta["message"],
             traceback="",  # or traceback.format_exc()
@@ -205,7 +200,7 @@ def forecast_for_podel_id(
             xgb_model = train_xgb(X_train, y_train, xgb_params_tuple)
         except Exception as model_fit_exception:
             meta = get_error_metadata("ModelFitFailure", {"exception": str(model_fit_exception)})
-            insert_profiling_error(log_id=None, error=meta["message"], traceback="", error_type="ModelFitFailure",
+            report_validation_error(log_id=None, error=meta["message"], traceback="", error_type="ModelFitFailure",
                                    severity=meta["severity"], component=meta["component"])
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
             data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
@@ -222,13 +217,20 @@ def forecast_for_podel_id(
 
         metrics, baseline_metrics = evaluate_predictions(y_test, test_pred)
 
-        fc_df = recursive_forecast(history_series, stl_obj, xgb_model,
+        # Forecast from a model refit on ALL data (train+test) so the future uses
+        # the most recent months; the train-only xgb_model above is kept solely for
+        # the held-out backtest metrics. Mirrors the ARIMA full-data forecast.
+        xgb_full = train_xgb(pod_df[feature_cols], pod_df["deseasoned"], xgb_params_tuple)
+        fc_df = recursive_forecast(history_series, stl_obj, xgb_full,
                                    feature_cols, start_fc, end_fc,
                                    lags, windows)
         future_forecast = fc_df['forecast']
+        # Full-history fitted line (train fit + held-out test) for the solid
+        # "predicted historical" overlay; metrics stay on the held-out test above.
+        in_sample_fit = pd.concat([train_pred, test_pred]).sort_index()
         data.append(_collect_metrics(
             pod_id, customer_id, consumption_type,
-            future_forecast, metrics, baseline_metrics
+            future_forecast, metrics, baseline_metrics, in_sample=in_sample_fit
         ))
         # plot_forecast(pod_df, fc_df, consumption_type, end_fc)
     return PodIDPerformanceData(
@@ -237,4 +239,39 @@ def forecast_for_podel_id(
         customer_id=customer_id,
         user_forecast_method_id=ufm_config.user_forecast_method_id,
         performance_data_frame=pd.DataFrame(data)
+    )
+
+
+def forecast_for_entity(
+    unit: PredictionUnit,
+    ufm_config,
+    forecast_model: ForecastModel,
+    base_lags: List[int] = [1, 2, 3, 6],
+    base_windows: List[int] = [3, 6],
+    test_months: int = 3,
+) -> EntityPerformanceData:
+    """
+    Entity-aware wrapper around forecast_for_podel_id for the unbundled path.
+    Accepts a PredictionUnit and returns EntityPerformanceData.
+    """
+    consumption_types = consumption_columns(unit.series)
+    pod_perf = forecast_for_podel_id(
+        df=unit.series,
+        customer_id=unit.customer_id,
+        pod_id=unit.entity_id,
+        consumption_types=consumption_types,
+        ufm_config=ufm_config,
+        base_lags=base_lags,
+        base_windows=base_windows,
+        test_months=test_months,
+    )
+    return EntityPerformanceData(
+        entity_id=unit.entity_id,
+        entity_type=unit.entity_type,
+        tariff_type=unit.tariff_type,
+        customer_id=unit.customer_id,
+        forecast_method_name=ufm_config.forecast_method_name,
+        user_forecast_method_id=ufm_config.user_forecast_method_id,
+        performance_data_frame=pod_perf.performance_data_frame,
+        tariff_id=unit.tariff_id,
     )

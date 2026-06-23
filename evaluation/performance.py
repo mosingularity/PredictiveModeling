@@ -1,29 +1,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from typing import Dict, List, Optional, Union, Any
-import shap
-from sklearn.inspection import permutation_importance, PartialDependenceDisplay
 import pandas as pd
-from sklearn.model_selection import learning_curve
-import matplotlib.pyplot as plt
-import logging
-# Setup logger
-logging.basicConfig(level=logging.INFO)
-@dataclass
-class PerformanceData:
-    forecast_method_name: str
-    customer_id: str
-    pod_id: str
-    user_forecast_method_id: int
-    metrics: Dict[str, float ] = field(default_factory=dict)
-
-    def log_metric(self, metric: str, value: float, alternative: str = None, consumption_type: str = None):
-        if alternative is None:
-            key = f'{metric}_{consumption_type}' if consumption_type is not None else f'{metric}'
-            self.metrics[key] = value
-        else:
-            key = f'{metric}_{consumption_type}_{alternative}' if consumption_type is not None else f'{metric}'
-            self.metrics[key] = value
 import math
 
 @dataclass
@@ -289,75 +267,46 @@ class CustomerPerformanceData:
 
         return pod_filtered
 
-def get_performance_data(forecast_method_name: str, customer_id: str, pod_id: str, user_forecast_method_id: int) -> PerformanceData:
-    return PerformanceData(forecast_method_name, customer_id, pod_id, user_forecast_method_id)
+@dataclass
+class PredictionUnit:
+    entity_id: str
+    entity_type: str        # "POD" | "Combo" | "CSA"
+    tariff_type: str        # "LPU" | "SPU" | "PPU"
+    customer_id: str
+    tariff_id: int
+    series: pd.DataFrame    # indexed by ReportingMonth, sorted ascending
 
+@dataclass
+class EntityPerformanceData:
+    entity_id: str
+    entity_type: str
+    tariff_type: str
+    customer_id: str
+    forecast_method_name: str
+    user_forecast_method_id: int
+    performance_data_frame: pd.DataFrame
+    tariff_id: int = 0
 
-def most_frequent_params(params_list):
-    """Select most common params from CV results"""
-    param_counts = {}
-    for params in params_list:
-        for k, v in params.items():
-            param_counts.setdefault(k, {}).update({v: param_counts.get(k, {}).get(v, 0) + 1})
-    return {k: max(v.items(), key=lambda x: x[1])[0] for k, v in param_counts.items()}
+@dataclass
+class UnbundledResults:
+    forecast_method_name: str
+    entity_performance: List[EntityPerformanceData] = field(default_factory=list)
 
-def generate_diagnostics(model, X, y, feature_names, verbose: bool = False):
-    """Comprehensive model interpretation"""
-
-    # Gini Importance
-    importance_df = pd.DataFrame({
-        'feature': feature_names,
-        'gini': model.feature_importances_,
-        'permutation': permutation_importance(model, X, y, n_repeats=10).importances_mean
-    }).sort_values(by='gini', ascending=False)
-    print("Feature Importance:", importance_df)
-
-    # SHAP Analysis
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    shap.summary_plot(shap_values, X, feature_names=feature_names)
-
-    # Partial Dependence
-    for feature in feature_names[:3]:
-        PartialDependenceDisplay.from_estimator(
-            model, X, [feature],
-            kind='both',
-            subsample=1000,
-            n_jobs=-1
-        )
-    if verbose:
-        train_sizes, train_scores, test_scores = learning_curve(model, X, y, cv=5, scoring='neg_mean_squared_error')
-        plt.plot(train_sizes, -np.mean(train_scores, axis=1), label='Training error')
-        plt.plot(train_sizes, -np.mean(test_scores, axis=1), label='Validation error')
-        plt.xlabel('Training size')
-        plt.ylabel('MSE')
-        plt.legend()
-        plt.title('Learning Curve')
-        plt.show()
-
-        # OOB Error Tracking
-        oob_scores = [estimator.oob_score_ for estimator in model.estimators_]
-        plt.plot(oob_scores)
-        plt.title('OOB Error During Training')
-        plt.xlabel('Number of Trees')
-        plt.ylabel('OOB Score')
-
-# Performance Reporting
-def report_performance(scores):
-    """
-    Report and log the average performance metrics over outer folds.
-
-    Returns:
-      - dict: Aggregated performance metrics (MAE, RMSE, R², MAPE).
-    """
-    mae_avg = np.mean([s["mae"] for s in scores])
-    rmse_avg = np.mean([s["rmse"] for s in scores])
-    r2_avg = np.mean([s["r2"] for s in scores])
-
-    performance = {
-        "MAE": mae_avg,
-        "RMSE": rmse_avg,
-        "R2": r2_avg
-    }
-    logging.info(f"Final Model Performance: {performance}")
-    return performance
+    def get_performance_data(self) -> pd.DataFrame:
+        # Stamp the entity identifiers onto every output row. The per-entity
+        # performance frame is keyed by pod_id/consumption_type only; EntityID,
+        # EntityType, TariffType and TariffID live on the wrapper, so inject them
+        # here (the single flattening point) to satisfy DoD item 8.
+        frames = []
+        for e in self.entity_performance:
+            pdf = e.performance_data_frame
+            if pdf is None or len(pdf) == 0:
+                continue
+            pdf = pdf.assign(
+                EntityID=e.entity_id,
+                EntityType=e.entity_type,
+                TariffType=e.tariff_type,
+                TariffID=e.tariff_id,
+            )
+            frames.append(pdf)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

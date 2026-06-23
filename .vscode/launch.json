@@ -1,0 +1,117 @@
+{
+  // Local run/debug configs. Values that vary per machine/environment live in
+  // .env (gitignored) and are injected via "envFile" below — keep secrets there,
+  // not here, so this file is safe to commit and share.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ESF-ARIMA (Save Fixture)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-ARIMA.py",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SAVE_FIXTURE": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-XGBoost (Save Fixture)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-XGBoost.py",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "SAVE_FIXTURE": "1"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-ARIMA (Unbundled, Fixture)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-ARIMA.py",
+      "args": ["--mode", "unbundled"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-XGBoost (Unbundled, Fixture)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-XGBoost.py",
+      "args": ["--mode", "unbundled"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-ARIMA (Real Data)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-ARIMA.py",
+      "args": ["--mode", "unbundled"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env.real",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-XGBoost (Real Data)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-XGBoost.py",
+      "args": ["--mode", "unbundled"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env.real",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Load Ermelo CSVs (Real Data)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/load_ermelo_csvs.py",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "ESF-Notebook",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-XGBoost.py",
+      // Run from the repo root so `open("config.yaml")` and `from data.dataset import ...`
+      // resolve correctly.
+      "cwd": "${workspaceFolder}",
+      // Loads ENV=DEV, DATABRICKS_CONFIG_PROFILE, DATABRICKS_CLUSTER_ID,
+      // DATABRICK_TASK_ID — the same vars the lost launch.json used to pass in.
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      // Step into library code (e.g. databricks-connect / statsmodels) when debugging.
+      "justMyCode": false
+    },
+    {
+      // Runs the series_validator suite under pytest so F5 stops at breakpoints
+      // set in models/series_validator.py (justMyCode:false steps into the
+      // function under test, not just the test file).
+      "name": "Debug: test_series_validator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/test_series_validator.py", "-v"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

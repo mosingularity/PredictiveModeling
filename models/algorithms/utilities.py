@@ -212,7 +212,9 @@ def prepare_time_series_data(
 def process_reporting_months(df_raw: pd.DataFrame) -> pd.DataFrame:
     df = df_raw.copy().reset_index()
     consumption_cols = [col for col in df.columns if "Consumption" in col]
-    base_keys = ['ReportingMonth', 'PodID', 'CustomerID']
+    # CustomerID is absent in entity-keyed unbundled (Ermelo) data — include only
+    # the identifier columns that are actually present so dedup degrades gracefully.
+    base_keys = [k for k in ('ReportingMonth', 'PodID', 'CustomerID') if k in df.columns]
     subset_keys = base_keys + consumption_cols
 
     # First pass: drop exact duplicates (identical across all columns)
