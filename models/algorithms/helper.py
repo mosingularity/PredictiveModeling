@@ -67,13 +67,17 @@ def ensure_numeric_consumption_types(df_raw: pd.DataFrame, model: ForecastModel)
     return df_raw
 
 
-def _collect_metrics(pod_id, customer_id, consumption_type, forecast, metrics=None, baseline_metrics=None, in_sample=None):
+def _collect_metrics(pod_id, customer_id, consumption_type, forecast, metrics=None, baseline_metrics=None, in_sample=None, validation_reason=None):
     # ``in_sample`` is the model's in-sample/backtest prediction Series (indexed by
     # historical ReportingMonth) that the metrics were scored on. It is computed
     # anyway during evaluation; carrying it lets the results layer draw each
     # model's fitted-history line. Additive — None for the skip/zero paths.
+    # ``validation_reason`` names WHY a series got the zero-fallback (gap / too
+    # short / all-zero / fit failed); it flows through to_tidy's validation_reason
+    # column so the dashboard can tell the user the specific reason, not just
+    # "unscored". None on the scored/success path.
     row = {'pod_id': pod_id, 'customer_id': customer_id, 'consumption_type': consumption_type,
-           'forecast': forecast, 'in_sample': in_sample}
+           'forecast': forecast, 'in_sample': in_sample, 'validation_reason': validation_reason}
     # A skipped/failed fit carries no metrics — record NaN, not 0.0. A fake 0.0
     # reads as a perfect score and silently deflates any RMSE_Avg it's mixed into;
     # NaN is the honest "unscored" signal the results layer keys off.

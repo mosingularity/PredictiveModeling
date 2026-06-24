@@ -173,7 +173,7 @@ def forecast_for_podel_id(
             )
             # logger.warning(f"⚠️ Invalid series for {consumption_type} @ Pod {pod_id}. Skipping.")
             forecast = pd.Series([0] * steps, index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="all-zero / flat series"))
             continue
 
         if len(series) < 12:
@@ -190,7 +190,7 @@ def forecast_for_podel_id(
                 component=meta["component"]
             )
             forecast = pd.Series([0] * steps, index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="series too short"))
             # logger.info(meta["message"])
             continue
 
@@ -217,7 +217,7 @@ def forecast_for_podel_id(
                 )
                 # logger.info(f"⛔ Forecast gap too large for {consumption_type} @ Pod {pod_id}. Skipping.")
                 forecast = pd.Series([0] * steps, index=forecast_horizon)
-                data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+                data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="gap too large"))
                 continue
             elif gap_handling == "fill":
                 total_steps = gap_months
@@ -280,7 +280,7 @@ def forecast_for_podel_id(
             meta = get_error_metadata("ModelFitFailure", {"exception": str(e)})
             report_validation_error(log_id=None, error=meta["message"], traceback="",  error_type="ModelFitFailure",severity=meta["severity"], component=meta["component"])
             forecast = pd.Series([0] * steps, index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="model fit failed"))
             continue
     return PodIDPerformanceData(
         pod_id=pod_id,

@@ -40,6 +40,16 @@ def _carried_metrics(rows: pd.DataFrame) -> Optional[Dict[str, float]]:
     return out if len(out) == 3 else None
 
 
+def _carried_reason(rows: pd.DataFrame) -> Optional[str]:
+    """Why an unscored model got the zero-fallback (gap / too short / all-zero /
+    fit failed), carried from the runner via validation_reason, or None."""
+    if "validation_reason" in rows.columns:
+        vals = rows["validation_reason"].dropna()
+        if len(vals):
+            return str(vals.iloc[0])
+    return None
+
+
 def _model_label(model: str, metrics: Optional[Dict[str, float]]) -> str:
     if not metrics:
         return f"{model} · (unscored)"
@@ -80,7 +90,7 @@ def build_forecast_figure(
     colour = {m: model_colour(m, i) for i, m in enumerate(all_models)}
     is_fc = tidy["is_forecast"].astype("boolean").fillna(True)
 
-    unscored = []  # models whose fit failed (NaN metrics = the zero-fallback)
+    unscored = []  # (model, reason) for fits with NaN metrics = the zero-fallback
     for model in all_models:
         rows = tidy[tidy["model"] == model]
         if rows.empty:
@@ -88,8 +98,8 @@ def build_forecast_figure(
         metrics = _carried_metrics(rows)
         if metrics is None:
             # A failed/skipped fit returns a degenerate zero series with no score —
-            # don't draw it as a confident forecast; flag it instead.
-            unscored.append(model)
+            # don't draw it as a confident forecast; flag it (with the why) instead.
+            unscored.append((model, _carried_reason(rows)))
             continue
         clr = colour[model]
         label = _model_label(model, metrics)
@@ -115,9 +125,10 @@ def build_forecast_figure(
                 _add_ci(fig, forecast, clr, model)
 
     if unscored:
+        parts = [f"{m}: {reason}" if reason else f"{m}: unscored" for m, reason in unscored]
         fig.add_annotation(
             x=0.0, xref="paper", xanchor="left", y=1.06, yref="paper", yanchor="bottom",
-            showarrow=False, text=f"⚠ fit failed (unscored): {', '.join(unscored)}",
+            showarrow=False, text="⚠ no forecast — " + " · ".join(parts),
             font=dict(size=12, color="#b00020"),
         )
 

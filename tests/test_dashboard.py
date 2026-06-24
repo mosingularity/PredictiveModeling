@@ -94,12 +94,13 @@ def test_failed_fit_is_skipped_and_flagged_not_drawn_as_zero():
                          consumption_type="PeakConsumption", param_set_id="default",
                          model="FAILED", ds=ds, y=np.nan, y_hat=0.0, y_hat_lower=np.nan,
                          y_hat_upper=np.nan, is_forecast=True, RMSE=np.nan, MAE=np.nan, R2=np.nan,
-                         scenario=None, validation_reason=None))
+                         scenario=None, validation_reason="gap too large"))
     fig = build_forecast_figure(validate_tidy(pd.DataFrame(rows)))
     drawn = {t.legendgroup for t in fig.data if t.legendgroup}
     assert "ARIMA" in drawn and "FAILED" not in drawn
     notes = " ".join(a.text for a in fig.layout.annotations)
-    assert "FAILED" in notes and "fit failed" in notes
+    # The model is flagged AND the specific per-series reason is surfaced (not just "unscored").
+    assert "FAILED" in notes and "gap too large" in notes
 
 
 # ── Tab 2 — metrics figure ───────────────────────────────────────────────────────

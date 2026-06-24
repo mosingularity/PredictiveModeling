@@ -61,17 +61,17 @@ def forecast_for_podel_id(
 
         if invalid_series(pod_id, pod_df[consumption_type], consumption_type):
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="all-zero / flat series"))
             continue
 
         if invalid_length(pod_df[consumption_type], consumption_type):
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="series too short"))
             continue
 
         if invalid_forecast_horizon(pod_id, pod_df[consumption_type], consumption_type, forecast_horizon):
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="gap too large"))
             continue
 
         forecast_horizon_months = ((end_fc.year - pod_df.index.max().year) * 12 +
@@ -90,7 +90,7 @@ def forecast_for_podel_id(
                 f"🚫 Not enough data after split for {consumption_type} @ Pod {pod_id}. Skipping."
             )
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="insufficient data after split"))
             continue
         X_train, y_train = train_df[feature_cols], train_df["deseasoned"]
         X_test, y_test = test_df[feature_cols], test_df["deseasoned"]
@@ -104,7 +104,7 @@ def forecast_for_podel_id(
             report_validation_error(log_id=None, error=meta["message"], traceback="", error_type="ModelFitFailure",
                                    severity=meta["severity"], component=meta["component"])
             forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
-            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast))
+            data.append(_collect_metrics(pod_id, customer_id, consumption_type, forecast, validation_reason="model fit failed"))
             continue
 
         train_pred_ds = rf_model.predict(X_train)
