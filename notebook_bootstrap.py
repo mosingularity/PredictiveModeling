@@ -70,6 +70,52 @@ def resolve_task_id(dbutils, default="2"):
     return int(dbutils.widgets.get("DatabrickTaskID"))
 
 
+def _truthy(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+def resolve_unbundled(dbutils, default=False):
+    """Mode flag — True → unbundled (entity-keyed LPU/SPU/PPU), False → bundled (customer/pod).
+
+    Local: the ``UNBUNDLED`` env var (default ``false``). Cluster: the ``Unbundled``
+    widget (created here if absent, default ``false``). Mirrors :func:`resolve_task_id`
+    — the flag only selects the iteration path; the model and its parameters still
+    come from the UFM config. Bundled is the default so existing jobs are unchanged;
+    unbundled is opt-in.
+    """
+    if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
+        raw = os.environ.get("UNBUNDLED", str(default))
+    else:
+        default_str = "true" if default else "false"
+        try:
+            dbutils.widgets.dropdown(
+                "Unbundled", default_str, ["true", "false"],
+                "Unbundled (entity-keyed) mode?")
+            raw = dbutils.widgets.get("Unbundled")
+        except Exception:
+            # Widget machinery unavailable / undefined → fall back to the default.
+            raw = default_str
+    unbundled = _truthy(raw)
+    logger.info(f"🔀 Mode flag resolved: {'unbundled' if unbundled else 'bundled'}.")
+    return unbundled
+
+
+def run_forecast(dataset, spark, config, forecast_unbundled_fn, unbundled):
+    """Dispatch a loaded ``ForecastDataset`` to the unbundled or bundled forecaster.
+
+    Both read the model and parameters from ``dataset.ufm_config``; ``unbundled``
+    only chooses entity-keyed iteration vs the customer/pod pipeline. Returns the
+    forecaster's result.
+    """
+    if unbundled:
+        from models.base import ForecastModel
+        logger.info("🔀 Running UNBUNDLED (entity-keyed) forecast.")
+        return forecast_unbundled_fn(ForecastModel(dataset, config), spark)
+    from programs.pipeline import ForecastPipeline
+    logger.info("🔀 Running BUNDLED (customer/pod) forecast.")
+    return ForecastPipeline(dataset=dataset, config=config).run(spark)
+
+
 def save_fixture(dataset):
     """If SAVE_FIXTURE is set, dump dataset.processed_df to data/fixtures and exit; else no-op."""
     if not os.environ.get("SAVE_FIXTURE"):

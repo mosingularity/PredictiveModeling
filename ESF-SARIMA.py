@@ -16,7 +16,8 @@ logging.basicConfig(level=logging.WARNING)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
 from notebook_bootstrap import (resolve_env, init_spark, assert_local_workspace,
-                                 resolve_task_id, save_fixture, run_unbundled_fixture)
+                                 resolve_task_id, resolve_unbundled, run_forecast,
+                                 save_fixture, run_unbundled_fixture)
 resolve_env()
 
 # COMMAND ----------
@@ -67,6 +68,7 @@ spark, dbutils = init_spark()
 set_dbutils(dbutils)
 assert_local_workspace(spark)
 databrick_task_id = resolve_task_id(dbutils)
+unbundled = resolve_unbundled(dbutils)
 
 
 # COMMAND ----------
@@ -92,15 +94,11 @@ forecast_range = dataset.define_forecast_range()
 
 # COMMAND ----------
 
-from programs.pipeline import ForecastPipeline
-
 # COMMAND ----------
 
-pipeline = ForecastPipeline(dataset=dataset,config=config)
-
-# COMMAND ----------
-
-pipeline.run(spark)
+# Mode dispatch — bundled by default; set the Unbundled widget (cluster) or the
+# UNBUNDLED env (local) to run the entity-keyed path instead.
+result = run_forecast(dataset, spark, config, forecast_arima_unbundled, unbundled)
 
 # COMMAND ----------
 
