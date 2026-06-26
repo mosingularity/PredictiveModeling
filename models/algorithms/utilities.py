@@ -109,54 +109,6 @@ def regressor_grid_for_pipeline(
     return updated_grid
 
 
-def load_hyperparameter_grid_rf(config = None):
-    """
-    Load the hyperparameter grid for Random Forest from the YAML configuration
-    using the utilities module.
-
-    The config.yaml file should contain a key 'random_forest' with the following structure:
-
-    random_forest:
-      regression:
-        n_estimators: [100, 200, 300]
-        max_depth: [null, 5, 10, 15]
-        min_samples_split: [2, 5, 10]
-        min_samples_leaf: [1, 3, 5]
-        random_state: [42]
-        oob_score: [true]
-      classification:
-        n_estimators: [100, 200, 300]
-        max_depth: [null, 5, 10, 15]
-        min_samples_split: [2, 5, 10]
-        min_samples_leaf: [1, 3, 5]
-        random_state: [42]
-        class_weight: ["balanced", null]
-
-    If the required configuration is not found, a default grid is returned.
-
-    Args:
-        regression (bool): Whether to load the grid for regression or classification.
-
-    Returns:
-        dict: Hyperparameter grid dictionary.
-    """
-    # Default grid in case the configuration is missing or incomplete.
-    default_grid = {
-        'n_estimators': [100, 200],
-        'max_depth': [None, 10],
-        'min_samples_split': [2, 5],
-        'min_samples_leaf': [1, 3],
-        'random_state': [42],
-        'oob_score': [True]
-    }
-    if config is not None:
-        rf_config = config.get("random_forest", {})
-        grid = rf_config.get("regression", default_grid)
-        logging.info("Loaded hyperparameter grid from config.yaml using utilities")
-        return grid
-    else:
-        return default_grid
-
 def load_best_params_rf(
     model_dir: str,
     consumption_type: str

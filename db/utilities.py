@@ -23,6 +23,11 @@ def get_environment_config(config_path: str = "config.yaml") -> Tuple[str, Dict]
     return env, config[env]
 
 
+def get_table(key: str, config_path: str = "config.yaml") -> str:
+    """Resolve a SQL table name from the config.yaml ``tables`` block."""
+    return load_yaml_config(config_path)["tables"][key]
+
+
 def get_jdbc_options(config_path: str = "config.yaml") -> Tuple[str, str, str]:
     _, env_cfg = get_environment_config(config_path)
     user = os.getenv("DB_USER", "fortrackSQL")
