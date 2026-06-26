@@ -21,3 +21,13 @@ dbx-connect/
 
 # Generated content-addressed results packs (results-analysis)
 results_packs/
+
+# Local workspace, planning, and assistant scratch — never commit
+.claude/
+.sixth/
+learning/
+databricks-e2e/
+unbundled-modelling/
+
+# Coverage output
+.coverage
