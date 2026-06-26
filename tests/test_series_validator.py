@@ -86,6 +86,15 @@ CASES = [
         "all-zero series",
     ),
     (
+        # An all-zero series that also has a minor gap must still be rejected as
+        # all-zero — the gap pass must not short-circuit the all-zero hard stop.
+        "all_zero_with_small_gap_still_fails",
+        "XGBoost",
+        _make_unit(_SMALL_GAP, [0.0] * len(_SMALL_GAP)),
+        False,
+        "all-zero series",
+    ),
+    (
         "negative_passes_with_warning",
         "ARIMA",
         _make_unit(_contiguous("2024-01-01", 18), _NEGATIVE_VALUES),

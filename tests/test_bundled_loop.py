@@ -51,3 +51,26 @@ def test_run_bundled_calls_pod_once_per_pod_and_writes_twice():
     # The two writes target the two expected tables.
     tables = {call.args[2] for call in mock_write.call_args_list}
     assert tables == {_bundled.target_table_name, _bundled.performance_metrics_table}
+
+
+def test_one_pod_failure_does_not_abort_bundled_run():
+    """A single pod whose forecast raises is skipped; the run still completes,
+    writes both tables, and the failed pod produces no output rows."""
+    model = _make_model(n_customers=2, n_pods=2)
+
+    def flaky(pod_df, customer_id, pod_id, consumption_types, ufm_config, model):
+        if pod_id == "P0_0":
+            raise RuntimeError("boom")
+        return SimpleNamespace(performance_data_frame=pd.DataFrame())
+
+    convert_fc = MagicMock(return_value=pd.DataFrame({"y": [1]}))
+    with patch.object(_bundled, "jdbc_write") as mock_write, \
+         patch.object(_bundled, "run_forecast_sanity_checks"), \
+         patch.object(_bundled, "ensure_numeric_consumption_types", side_effect=lambda d, m: d), \
+         patch.object(_bundled, "_convert_to_model_performance_row",
+                      return_value=SimpleNamespace(to_row=lambda: {"x": 1})), \
+         patch.object(_bundled, "_convert_forecast_map_to_df", convert_fc):
+        _bundled.run_bundled(model, spark=None, forecast_pod=flaky)
+
+    assert convert_fc.call_count == 3   # 4 pods, 1 failed -> 3 produced (no row for the failure)
+    assert mock_write.call_count == 2   # run still completes and writes both tables

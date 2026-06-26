@@ -106,7 +106,7 @@ def test_arima_loop_groups_correctly():
         "models.algorithms.autoarima",
         "forecast_arima_unbundled",
         "ARIMA",
-        "models.algorithms.autoarima.get_predictive_data",
+        "models.algorithms._unbundled.get_unbundled_predictive_data",
         "models.algorithms.autoarima.forecast_for_entity",
     )
     assert isinstance(result, UnbundledResults)
@@ -119,7 +119,7 @@ def test_xgb_loop_groups_correctly():
         "models.algorithms.tree_algorithms.xgb",
         "forecast_xgb_unbundled",
         "XGBoost",
-        "models.algorithms._unbundled.get_predictive_data",
+        "models.algorithms._unbundled.get_unbundled_predictive_data",
         "models.algorithms.tree_algorithms.xgb.forecast_for_entity",
     )
     assert isinstance(result, UnbundledResults)
@@ -132,7 +132,7 @@ def test_rf_loop_groups_correctly():
         "models.algorithms.tree_algorithms.rf",
         "forecast_rf_unbundled",
         "RandomForest",
-        "models.algorithms._unbundled.get_predictive_data",
+        "models.algorithms._unbundled.get_unbundled_predictive_data",
         "models.algorithms.tree_algorithms.rf.forecast_for_entity",
     )
     assert isinstance(result, UnbundledResults)
@@ -152,10 +152,38 @@ def test_loop_entity_ids_correct():
         "models.algorithms.autoarima",
         "forecast_arima_unbundled",
         "ARIMA",
-        "models.algorithms.autoarima.get_predictive_data",
+        "models.algorithms._unbundled.get_unbundled_predictive_data",
         "models.algorithms.autoarima.forecast_for_entity",
     )
     units = _extract_unit_kwargs(spy)
     seen = {(u.tariff_type, u.entity_id) for u in units}
     expected = {(t, e) for t in TARIFF_TYPES for e in ENTITY_IDS}
     assert seen == expected
+
+
+# ── resilience: one failing entity must not abort the run ──────────────────────
+
+def test_one_entity_failure_does_not_abort_unbundled_run(caplog):
+    """A single entity whose forecast raises is skipped; the rest still complete,
+    and the failed entity produces no output rows."""
+    import logging
+
+    from models.algorithms._unbundled import run_unbundled
+
+    model = _make_model_stub("ARIMA")
+
+    def flaky(unit, ufm_config, m):
+        if unit.entity_id == "E001":
+            raise RuntimeError("convergence boom")
+        return _entity_perf_stub(unit)
+
+    with patch("models.algorithms._unbundled.get_unbundled_predictive_data", return_value=MOCK_DATA), \
+         caplog.at_level(logging.INFO, logger="validation.run_summary"):
+        result = run_unbundled(model, spark=None, forecast_for_entity=flaky)
+
+    produced = {(e.tariff_type, e.entity_id) for e in result.entity_performance}
+    assert {eid for _, eid in produced} == {"E002"}             # only the healthy entity
+    assert len(result.entity_performance) == len(TARIFF_TYPES)  # E002 across every tariff type
+    # one summary line, with the failures tallied (not one warning per entity)
+    assert "summary" in caplog.text
+    assert "failed" in caplog.text

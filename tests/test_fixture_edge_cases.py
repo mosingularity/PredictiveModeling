@@ -513,9 +513,9 @@ def loop_run():
         constructed.append(unit)
         return _real_validate_series(unit, method)
 
-    with patch("models.algorithms.autoarima.get_predictive_data", return_value=_EDGE_FIXTURE), \
+    with patch("models.algorithms._unbundled.get_unbundled_predictive_data", return_value=_EDGE_FIXTURE), \
          patch("models.algorithms.autoarima.forecast_for_entity", route_spy), \
-         patch("models.algorithms.autoarima.validate_series", side_effect=_validate_capture):
+         patch("models.algorithms._unbundled.validate_series", side_effect=_validate_capture):
         result = forecast_arima_unbundled(_model_stub(), spark=None)
     return result, route_spy, constructed
 
