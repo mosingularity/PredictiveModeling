@@ -15,7 +15,7 @@ logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
 from notebook_bootstrap import (resolve_env, init_spark, assert_local_workspace,
                                  resolve_task_id, resolve_unbundled, run_forecast,
-                                 save_fixture, run_unbundled_fixture)
+                                 save_fixture, run_unbundled_fixture, render_unbundled)
 # ENV picks the config.yaml section and DB host. An explicit ENV always wins;
 # otherwise DEV locally (databricks-connect), PROD on a Databricks cluster.
 resolve_env()
@@ -107,3 +107,7 @@ result = run_forecast(dataset, spark, config, forecast_arima_unbundled, unbundle
 # COMMAND ----------
 
 
+
+# Unbundled path is display-only — render forecast output inline (no DB writes).
+# The bundled path persists to ForecastFact / StatisticalPerformanceMetrics instead.
+render_unbundled(result, unbundled)

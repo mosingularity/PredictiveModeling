@@ -116,6 +116,35 @@ def run_forecast(dataset, spark, config, forecast_unbundled_fn, unbundled):
     return ForecastPipeline(dataset=dataset, config=config).run(spark)
 
 
+def render_unbundled(result, unbundled=True):
+    """Display-only terminal step for the unbundled path.
+
+    Renders the unbundled forecast output inline in the notebook cell (a summary
+    line plus a forecast/metrics table) and performs **no** DB writes — the
+    unbundled Ermelo path is a cells-only display demo. No-op for the bundled
+    path, which persists to ForecastFact / StatisticalPerformanceMetrics instead.
+    Returns the previewed DataFrame, or None when skipped.
+    """
+    if not unbundled:
+        return None
+    perf = result.get_performance_data()
+    if perf is None or perf.empty:
+        print("⚠️ Unbundled run produced no forecast rows (nothing to display).")
+        return perf
+    n_entities = perf["EntityID"].nunique() if "EntityID" in perf.columns else "?"
+    print(f"📊 Unbundled forecast — {len(perf)} row(s) across {n_entities} "
+          f"entit{'y' if n_entities == 1 else 'ies'}; display-only, no DB writes.")
+    cols = [c for c in ("EntityID", "EntityType", "TariffType", "ReportingMonth",
+                        "forecast", "RMSE", "MAE", "R2") if c in perf.columns]
+    preview = perf[cols] if cols else perf
+    try:
+        from IPython.display import display
+        display(preview)
+    except Exception:
+        print(preview.to_string(index=False))
+    return preview
+
+
 def save_fixture(dataset):
     """If SAVE_FIXTURE is set, dump dataset.processed_df to data/fixtures and exit; else no-op."""
     if not os.environ.get("SAVE_FIXTURE"):
@@ -164,5 +193,6 @@ def run_unbundled_fixture(method_id, method_name, forecast_unbundled_fn, config)
         dataset=types.SimpleNamespace(ufm_config=ufm_config),
         config=types.SimpleNamespace(log=config.get("log", False)),
     )
-    print(forecast_unbundled_fn(model_stub, spark=None))
+    result = forecast_unbundled_fn(model_stub, spark=None)
+    render_unbundled(result, unbundled=True)
     sys.exit(0)
