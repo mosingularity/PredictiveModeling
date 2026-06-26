@@ -10,6 +10,7 @@ from typing import Tuple, NamedTuple
 
 from db.error_logger import report_validation_error
 from models.algorithms._bundled import run_bundled
+from models.algorithms._unbundled import run_unbundled
 from evaluation.performance import *
 from hyperparameters import get_model_hyperparameters
 from models.algorithms.helper import _convert_to_model_performance_row, \
@@ -17,7 +18,7 @@ from models.algorithms.helper import _convert_to_model_performance_row, \
 from models.algorithms.utilities import prepare_time_series_data, evaluate_predictions
 from models.base import ForecastModel
 from validation.forecast import run_forecast_sanity_checks
-from validation.series import validate_series, consumption_columns
+from validation.series import consumption_columns
 
 # Setup logger with basic configuration
 logging.basicConfig(level=logging.WARNING)
@@ -25,9 +26,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
-
-performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
-target_table_name = "dbo.ForecastFact"
 
 
 
@@ -62,16 +60,6 @@ def train_sarima_model(series: pd.Series, order: Tuple[int, int, int], seasonal_
 
 
 
-def predict_time_series_model(model, steps, return_ci=False, log = False):
-    forecast = model.get_forecast(steps=steps)
-    mean_forecast = forecast.predicted_mean
-    if log:
-        mean_forecast = np.exp(mean_forecast)
-    if return_ci:
-        conf_int = forecast.conf_int()
-        return mean_forecast, conf_int
-    return mean_forecast
-
 def _forecast_arima_pod(pod_df, customer_id, pod_id, consumption_types, ufm_config, model):
     order, seasonal_order = get_model_hyperparameters(
         ufm_config.forecast_method_name, ufm_config.model_parameters)
@@ -84,42 +72,18 @@ def forecast_arima_for_single_customer(model: ForecastModel, spark):
     return run_bundled(model, spark, _forecast_arima_pod)
 
 def forecast_arima_unbundled(model: ForecastModel, spark) -> UnbundledResults:
+    """ARIMA/SARIMA unbundled run — delegates to the shared :func:`run_unbundled`
+    driver (grouping, validation, error logging) via an adapter that threads the
+    model's order/seasonal_order into the per-entity call.
+    """
     ufm_config = model.dataset.ufm_config
-    order, seasonal_order = get_model_hyperparameters(ufm_config.forecast_method_name, ufm_config.model_parameters)
-    data = get_predictive_data(spark, ufm_config.user_forecast_method_id)
-    results = UnbundledResults(forecast_method_name=ufm_config.forecast_method_name)
-    for (tariff_type, entity_id), group in data.groupby(["TariffType", "EntityID"]):
-        series = group.set_index("ReportingMonth").sort_index()
-        if "PodID" not in series.columns:
-            series = series.copy()
-            series["PodID"] = entity_id
-        unit = PredictionUnit(
-            entity_id=entity_id,
-            entity_type=group["EntityType"].iloc[0],
-            tariff_type=tariff_type,
-            # Real unbundled exports (Ermelo) are entity-keyed and carry no
-            # CustomerID; it is reporting metadata only, so default to "" when absent.
-            customer_id=str(group["CustomerID"].iloc[0]) if "CustomerID" in group.columns else "",
-            tariff_id=group["TariffID"].iloc[0],
-            series=series,
-        )
-        ok, reason = validate_series(unit, ufm_config.forecast_method_name)
-        if not ok:
-            meta = get_error_metadata("SeriesValidationFailed", {"entity_id": entity_id, "reason": reason})
-            report_validation_error(
-                log_id=None,
-                error=meta["message"],
-                traceback="",
-                error_type="SeriesValidationFailed",
-                severity=meta["severity"],
-                component=meta["component"],
-            )
-            continue
-        if reason != "ok":
-            logger.warning(f"⚠️ Series validation warning for entity {entity_id}: {reason}")
-        result = forecast_for_entity(unit, order, ufm_config, model, seasonal_order)
-        results.entity_performance.append(result)
-    return results
+    order, seasonal_order = get_model_hyperparameters(
+        ufm_config.forecast_method_name, ufm_config.model_parameters)
+
+    def _forecast_arima_entity(unit, cfg, m):
+        return forecast_for_entity(unit, order, cfg, m, seasonal_order)
+
+    return run_unbundled(model, spark, _forecast_arima_entity)
 
 
 

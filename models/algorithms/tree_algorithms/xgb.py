@@ -21,8 +21,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
-target_table_name = "dbo.ForecastFact"
 
 def forecast_xgb_unbundled(model: ForecastModel, spark) -> UnbundledResults:
     return run_unbundled(model, spark, forecast_for_entity)

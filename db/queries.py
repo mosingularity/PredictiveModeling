@@ -3,14 +3,9 @@ from .utilities import read_sql_query,get_jdbc_options
 from dataclasses import dataclass
 import pandas as pd 
 import logging
-from .spark_session import get_spark_session
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, TimestampType, FloatType, LongType
 
 logger = logging.getLogger(__name__)
-
-def get_sample_rows(spark: SparkSession, table_name="dbo.DataBrickTasks", limit=5) -> DataFrame:
-    query = f"SELECT TOP {limit} * FROM {table_name}"
-    return read_sql_query(query, spark)
 
 def get_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
     import os
@@ -19,6 +14,28 @@ def get_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
         return pd.read_parquet(fixture_path)
     query = f"SELECT * FROM dbo.PredictiveInputData({UFMID})"
     return read_sql_query(query, spark)
+
+
+def get_unbundled_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
+    """Entity-keyed (LPU/SPU/PPU) predictive data — the unbundled analogue of
+    :func:`get_predictive_data`.
+
+    Honors ``PREDICTIVE_FIXTURE_PATH`` for local testing (returns the parquet
+    fixture as pandas). On a cluster / DEV it runs the shared unbundled query once
+    per tariff-scope filter (SPU, LPU, …) and appends the results — the same
+    Ermelo-shaped contract the unbundled loop groups on.
+    """
+    import os
+    from db.unbundled_query import build_query, to_contract, UNBUNDLED_FILTERS
+    fixture_path = os.getenv("PREDICTIVE_FIXTURE_PATH")
+    if fixture_path:
+        return pd.read_parquet(fixture_path)
+    frames = []
+    for label, where_clause in UNBUNDLED_FILTERS:
+        logger.info(f"📥 Unbundled query — {label} scope.")
+        raw = read_sql_query(build_query(where_clause), spark).toPandas()
+        frames.append(to_contract(raw))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 def get_actual_data(spark: SparkSession, rows=5000) -> DataFrame:
     query = f"""
