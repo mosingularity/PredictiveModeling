@@ -28,6 +28,7 @@ from models.algorithms import autoarima
 from models.algorithms.tree_algorithms import rf as rf_alg
 from models.algorithms.tree_algorithms import xgb as xgb_alg
 from results_analysis.tidy import to_tidy, validate_tidy
+from validation.series import CONSUMPTION_COLUMNS
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +41,6 @@ ALL_MODELS = ["ARIMA", "SARIMA", "RandomForest", "XGBoost"]
 # comparable across families (ARIMA/SARIMA via backtest_months, trees via
 # test_months — both default to 3 otherwise, but only here are they forced equal).
 BACKTEST_MONTHS = 6
-
-CONSUMPTION_COLUMNS = [
-    "PeakConsumption", "StandardConsumption", "OffPeakConsumption",
-    "Block1Consumption", "Block2Consumption", "Block3Consumption",
-    "Block4Consumption", "NonTOUConsumption",
-]
 
 
 def _forecast_model_stub():

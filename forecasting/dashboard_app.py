@@ -22,24 +22,13 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import plotly.graph_objects as go
 
-from forecasting.engine import ALL_MODELS, run_forecasts
+from forecasting.engine import ALL_MODELS, DEFAULT_PARAMS, run_forecasts
 from results_analysis.figures.dashboard import (
     build_forecast_figure,
     build_metrics_figure,
     entity_scenarios,
 )
-
-DEFAULT_PARAMS = {
-    "ARIMA": "(2,1,2)",
-    "SARIMA": "(1,1,1)(1,1,1,12)",
-    "RandomForest": "(100,10,2,1,5,true)",
-    "XGBoost": "(100,5,0.1,0.8,0.8)",
-}
-CONSUMPTION_COLUMNS = [
-    "PeakConsumption", "StandardConsumption", "OffPeakConsumption",
-    "Block1Consumption", "Block2Consumption", "Block3Consumption",
-    "Block4Consumption", "NonTOUConsumption",
-]
+from validation.series import CONSUMPTION_COLUMNS
 
 
 # ── state + cache (gradio-free, testable) ────────────────────────────────────────

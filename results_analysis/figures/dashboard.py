@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 
 from results_analysis.grammar import X_COL, model_colour
 from results_analysis.tidy import validate_tidy
+from validation.series import CONSUMPTION_COLUMNS, classify_reason
 
 _ACTUAL_COLOUR = "#222222"
 
@@ -224,27 +225,6 @@ def build_metrics_figure(tidy: pd.DataFrame, metric: str = "RMSE") -> go.Figure:
 
 # ── entity-picker scenario index (real validator) ───────────────────────────────
 
-_CONSUMPTION_COLUMNS = [
-    "PeakConsumption", "StandardConsumption", "OffPeakConsumption",
-    "Block1Consumption", "Block2Consumption", "Block3Consumption",
-    "Block4Consumption", "NonTOUConsumption",
-]
-
-
-def _classify(reason: str) -> str:
-    """Map a validate_series reason to a scenario slug (validator branch order)."""
-    if reason.startswith("series too short"):
-        return "short_history"
-    if reason.startswith("gaps ≤ 3 months"):
-        return "gap_within_limit"
-    if reason.startswith("gap of"):
-        return "gap_too_large"
-    if reason == "all-zero series":
-        return "all_zero"
-    if reason.startswith("negative values"):
-        return "negative_values"
-    return "happy_path"
-
 
 def entity_scenarios(raw_df: pd.DataFrame, method: str = "ARIMA") -> pd.DataFrame:
     """Per-entity scenario marks from the real validator — the picker's filter.
@@ -257,7 +237,7 @@ def entity_scenarios(raw_df: pd.DataFrame, method: str = "ARIMA") -> pd.DataFram
     from evaluation.performance import PredictionUnit
     from validation.series import validate_series
 
-    cols = [c for c in _CONSUMPTION_COLUMNS if c in raw_df.columns]
+    cols = [c for c in CONSUMPTION_COLUMNS if c in raw_df.columns]
     rows = []
     for entity_id, g in raw_df.groupby("EntityID"):
         series = (g[["ReportingMonth", *cols]]
@@ -269,5 +249,5 @@ def entity_scenarios(raw_df: pd.DataFrame, method: str = "ARIMA") -> pd.DataFram
         )
         ok, reason = validate_series(unit, method)
         rows.append({"EntityID": str(entity_id), "TariffType": str(g["TariffType"].iloc[0]),
-                     "scenario": _classify(reason), "ok": ok, "validation_reason": reason})
+                     "scenario": classify_reason(reason), "ok": ok, "validation_reason": reason})
     return pd.DataFrame(rows, columns=["EntityID", "TariffType", "scenario", "ok", "validation_reason"])
