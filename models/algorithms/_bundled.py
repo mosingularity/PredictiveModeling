@@ -12,7 +12,7 @@ from typing import Callable, List
 import pandas as pd
 
 from db.error_logger import report_validation_error
-from db.utilities import jdbc_write
+from db.utilities import jdbc_write, get_table
 from evaluation.performance import CustomerPerformanceData, ModelPodPerformance
 from models.algorithms.helper import (
     _convert_forecast_map_to_df,
@@ -23,12 +23,14 @@ from models.algorithms.helper import (
 from models.base import ForecastModel
 from validation.forecast import run_forecast_sanity_checks
 from validation.metadata import get_error_metadata
+from validation.run_summary import RunSummary
 from utils.exit_handler import safe_exit
 
 logger = logging.getLogger(__name__)
 
-performance_metrics_table = "dbo.StatisticalPerformanceMetrics"
-target_table_name = "dbo.ForecastFact"
+# Single source for the write targets — resolved from the config.yaml `tables` block.
+performance_metrics_table = get_table("performance_metrics_table")
+target_table_name = get_table("target_table_name")
 
 
 def run_bundled(model: ForecastModel, spark, forecast_pod: Callable):
@@ -62,10 +64,11 @@ def run_bundled(model: ForecastModel, spark, forecast_pod: Callable):
 
         all_forecasts = []
         model_performances_dataframes: List[pd.DataFrame] = []
+        summary = RunSummary(f"bundled {ufm_config.forecast_method_name}")
         for customer_id in unique_customers:
             customer_data = _get_customer_data(df, customer_id)
             if customer_data.empty:
-                logger.warning(f"🚫 No data found for customer {customer_id}, skipping.")
+                summary.record_skip("no customer data", customer_id)
                 continue
 
             consumer_perf = CustomerPerformanceData(customer_id=customer_id, columns=consumption_types)
@@ -73,15 +76,19 @@ def run_bundled(model: ForecastModel, spark, forecast_pod: Callable):
 
             for pod_id in customer_data["PodID"].unique().tolist():
                 pod_df = customer_data[customer_data["PodID"] == pod_id].sort_values("ReportingMonth")
-                pod_perf = forecast_pod(pod_df, customer_id, pod_id, consumption_types, ufm_config, model)
+                try:
+                    pod_perf = forecast_pod(pod_df, customer_id, pod_id, consumption_types, ufm_config, model)
+                except Exception as exc:  # backstop: one pod must not sink the whole run
+                    summary.record_failure(exc, f"{customer_id}/{pod_id}")
+                    continue
                 consumer_perf.pod_by_id_performance.append(pod_perf)
                 perf_rows.append(_convert_to_model_performance_row(pod_perf, customer_id, pod_id, ufm_config))
                 all_forecasts.append(_convert_forecast_map_to_df(pod_perf, customer_id, pod_id, ufm_config))
+                summary.record_ok()
 
             model_performances_dataframes.append(pd.DataFrame([m.to_row() for m in perf_rows]))
 
-        logger.info(f"📊 Processed {len(unique_customers)} customer(s); "
-                    f"{len(all_forecasts)} pod-forecast(s) produced.")
+        summary.log()
         performance = pd.concat(model_performances_dataframes).reset_index().drop(columns=["index"])
         forecast_combined_df = pd.concat(all_forecasts, ignore_index=True)
         run_forecast_sanity_checks(forecast_combined_df, performance, consumption_types, model)
