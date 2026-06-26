@@ -32,6 +32,12 @@ def get_unbundled_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
         return pd.read_parquet(fixture_path)
     frames = []
     for label, where_clause in UNBUNDLED_FILTERS:
+        # --- ErmeloSource override (removable: delete this block to revert to 'Ermelo') ---
+        _src = os.getenv("ERMELO_SOURCE")
+        if _src and _src != "Ermelo":
+            where_clause = where_clause.replace("'Ermelo'", f"'{_src}'")
+            logger.info(f"🎛️ ErmeloSource override active — CustomerServiceArea = {_src!r}.")
+        # --- end ErmeloSource override ---
         logger.info(f"📥 Unbundled query — {label} scope.")
         raw = read_sql_query(build_query(where_clause), spark).toPandas()
         frames.append(to_contract(raw))

@@ -17,7 +17,8 @@ logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
 from notebook_bootstrap import (resolve_env, init_spark, assert_local_workspace,
                                  resolve_task_id, resolve_unbundled, run_forecast,
-                                 save_fixture, run_unbundled_fixture, render_unbundled)
+                                 save_fixture, run_unbundled_fixture, render_unbundled,
+                                 resolve_ermelo_source)
 resolve_env()
 
 # COMMAND ----------
@@ -69,6 +70,9 @@ set_dbutils(dbutils)
 assert_local_workspace(spark)
 databrick_task_id = resolve_task_id(dbutils)
 unbundled = resolve_unbundled(dbutils)
+# --- ErmeloSource override (removable: delete these 3 lines to revert to 'Ermelo') ---
+ermelo_source = resolve_ermelo_source(dbutils)
+# --- end ErmeloSource override ---
 
 
 # COMMAND ----------

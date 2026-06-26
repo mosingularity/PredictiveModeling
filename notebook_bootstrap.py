@@ -100,6 +100,38 @@ def resolve_unbundled(dbutils, default=False):
     return unbundled
 
 
+# --- ErmeloSource override (removable) ---------------------------------------------
+# Optional override for the unbundled query's CustomerServiceArea filter (default
+# "Ermelo"). To remove this feature entirely, delete this whole block plus its two
+# companion blocks (the resolve_ermelo_source(...) call in each ESF-*.py cell and the
+# override block in db/queries.get_unbundled_predictive_data) — see
+# databricks-e2e/plans/03-ermelo-widget.md. With all three gone the unbundled query
+# reverts to its hardcoded 'Ermelo' filter with no residue.
+def resolve_ermelo_source(dbutils, default="Ermelo"):
+    """Resolve the unbundled query's CustomerServiceArea, mirroring resolve_unbundled.
+
+    Local: the ``ERMELO_SOURCE`` env var (default ``"Ermelo"``). Cluster: the
+    ``ErmeloSource`` text widget (created here if absent), whose value is mirrored
+    into ``ERMELO_SOURCE`` so the query layer (db.queries.get_unbundled_predictive_data)
+    reads one uniform source. Returns the resolved area string. Only affects the live
+    DEV query — a PREDICTIVE_FIXTURE_PATH run reads the fixture verbatim and ignores it.
+    """
+    if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
+        source = os.environ.get("ERMELO_SOURCE", default) or default
+    else:
+        try:
+            dbutils.widgets.text("ErmeloSource", default,
+                                 "Ermelo source (CustomerServiceArea)")
+            source = dbutils.widgets.get("ErmeloSource") or default
+        except Exception:
+            # Widget machinery unavailable / undefined → fall back to the default.
+            source = default
+        os.environ["ERMELO_SOURCE"] = source
+    logger.info(f"🎛️ ErmeloSource resolved: {source}.")
+    return source
+# --- end ErmeloSource override -----------------------------------------------------
+
+
 def run_forecast(dataset, spark, config, forecast_unbundled_fn, unbundled):
     """Dispatch a loaded ``ForecastDataset`` to the unbundled or bundled forecaster.
 
