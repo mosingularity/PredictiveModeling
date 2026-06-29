@@ -46,7 +46,13 @@ def init_spark():
     from pyspark.sql import SparkSession
     if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.connect import DatabricksSession
-        spark = DatabricksSession.builder.getOrCreate()
+        if _truthy(os.environ.get("DATABRICKS_SERVERLESS", "")):
+            # Serverless needs no cluster — used locally when no Connect-compatible
+            # (Single-User/Shared) cluster is available. DATABRICKS_CLUSTER_ID ignored.
+            logger.info("⚡ Local compute: serverless (DATABRICKS_SERVERLESS set).")
+            spark = DatabricksSession.builder.serverless(True).getOrCreate()
+        else:
+            spark = DatabricksSession.builder.getOrCreate()
     else:
         spark = SparkSession.builder.appName("Energy Consumption Prediction").getOrCreate()
     dbutils = _get_dbutils(spark)
