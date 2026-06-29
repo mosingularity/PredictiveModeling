@@ -18,7 +18,8 @@ import os
 from notebook_bootstrap import (resolve_env, init_spark, assert_local_workspace,
                                  resolve_task_id, resolve_unbundled, run_forecast,
                                  save_fixture, run_unbundled_fixture, render_unbundled,
-                                 resolve_ermelo_source)
+                                 resolve_ermelo_source,
+                                 resolve_use_ermelo_fixture)
 resolve_env()
 
 # COMMAND ----------
@@ -73,6 +74,9 @@ unbundled = resolve_unbundled(dbutils)
 # --- ErmeloSource override (removable: delete these 3 lines to revert to 'Ermelo') ---
 ermelo_source = resolve_ermelo_source(dbutils)
 # --- end ErmeloSource override ---
+# --- UseErmeloFixture test toggle (removable: delete these 3 lines) ---
+resolve_use_ermelo_fixture(dbutils)
+# --- end UseErmeloFixture test toggle ---
 
 
 # COMMAND ----------
