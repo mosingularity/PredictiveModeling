@@ -252,6 +252,21 @@ def render_unbundled(result, unbundled=True):
         display(preview)
     except Exception:
         print(preview.to_string(index=False))
+
+    # ForecastFact-shaped preview — the wide write-shape the bundled writer would
+    # persist (one row per ReportingMonth, a column per consumption type), molded from
+    # the same builder. Display only — the unbundled path performs NO DB writes.
+    try:
+        ff = result.to_forecast_fact()
+        if ff is not None and not ff.empty:
+            print(f"🧱 ForecastFact preview — {len(ff)} row(s), write-shape; NOT written.")
+            try:
+                from IPython.display import display
+                display(ff)
+            except Exception:
+                print(ff.to_string(index=False))
+    except Exception as exc:
+        print(f"⚠️ ForecastFact preview unavailable: {exc}")
     return preview
 
 

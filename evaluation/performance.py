@@ -229,3 +229,39 @@ class UnbundledResults:
             )
             frames.append(pdf)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def to_forecast_fact(self) -> pd.DataFrame:
+        """Mold the entity forecasts into the ForecastFact write-shape WITHOUT writing.
+
+        Reuses the SAME molder the bundled writer uses (:func:`build_forecast_df`): one
+        row per ReportingMonth, a column per consumption type, keyed by
+        PodID/CustomerID/UserForecastMethodID. EntityID maps to PodID (a real POD for
+        LPU; a synthetic Combo/CSA composite for SPU/PPU), and the entity-keyed identity
+        (EntityID/EntityType/TariffType/TariffID) is carried alongside so the mapping
+        stays visible. This is a display/validation preview of what the bundled writer
+        would persist — the unbundled path itself performs no DB writes. A per-entity
+        molding failure is skipped rather than fatal.
+        """
+        frames = []
+        for e in self.entity_performance:
+            pdf = e.performance_data_frame
+            if pdf is None or len(pdf) == 0 or "consumption_type" not in pdf.columns:
+                continue
+            try:
+                forecast_map = pdf.set_index("consumption_type")["forecast"].to_dict()
+                wide = build_forecast_df(
+                    forecast_map,
+                    customer_id=e.customer_id,
+                    pod_id=e.entity_id,
+                    cons_types=list(forecast_map.keys()),
+                    user_forecast_method_id=e.user_forecast_method_id,
+                ).assign(
+                    EntityID=e.entity_id,
+                    EntityType=e.entity_type,
+                    TariffType=e.tariff_type,
+                    TariffID=e.tariff_id,
+                )
+                frames.append(wide)
+            except Exception:
+                continue
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
