@@ -27,7 +27,12 @@ def get_unbundled_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
     """
     import os
     from db.unbundled_query import build_query, to_contract, UNBUNDLED_FILTERS
-    fixture_path = os.getenv("PREDICTIVE_FIXTURE_PATH")
+    # UNBUNDLED_FIXTURE_PATH is the unbundled-only override (entity-keyed shape, no
+    # PodID); PREDICTIVE_FIXTURE_PATH is the shared fallback. Keeping the unbundled
+    # override on its own var avoids redirecting the bundled load_data() — which
+    # reads PREDICTIVE_FIXTURE_PATH and expects bundled-shaped (PodID) data — at the
+    # entity-keyed parquet.
+    fixture_path = os.getenv("UNBUNDLED_FIXTURE_PATH") or os.getenv("PREDICTIVE_FIXTURE_PATH")
     if fixture_path:
         return pd.read_parquet(fixture_path)
     frames = []

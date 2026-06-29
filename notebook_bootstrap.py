@@ -179,11 +179,15 @@ def resolve_ermelo_source(dbutils, default="Ermelo"):
 # cell; nothing else depends on it (get_unbundled_predictive_data already honors
 # PREDICTIVE_FIXTURE_PATH on its own).
 def resolve_use_ermelo_fixture(dbutils, fixture_path="data/fixtures/unbundled_real_ermelo.parquet"):
-    """When ON, point ``PREDICTIVE_FIXTURE_PATH`` at the saved entity-keyed Ermelo
+    """When ON, point ``UNBUNDLED_FIXTURE_PATH`` at the saved entity-keyed Ermelo
     parquet so ``get_unbundled_predictive_data`` reads it instead of running the live
     query. Cluster: the ``UseErmeloFixture`` dropdown (true/false, default false).
-    Local: the ``USE_ERMELO_FIXTURE`` env var. When OFF, any existing
-    ``PREDICTIVE_FIXTURE_PATH`` is left untouched (so local fixture configs still work).
+    Local: the ``USE_ERMELO_FIXTURE`` env var. When OFF, the var is cleared.
+
+    Deliberately uses the unbundled-only ``UNBUNDLED_FIXTURE_PATH`` rather than the
+    shared ``PREDICTIVE_FIXTURE_PATH`` so it does NOT redirect the bundled
+    ``load_data()`` (which expects bundled-shaped, PodID-keyed data) at the
+    entity-keyed Ermelo parquet.
     """
     if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         raw = os.environ.get("USE_ERMELO_FIXTURE", "false")
@@ -197,9 +201,10 @@ def resolve_use_ermelo_fixture(dbutils, fixture_path="data/fixtures/unbundled_re
             raw = "false"
     use_fixture = _truthy(raw)
     if use_fixture:
-        os.environ["PREDICTIVE_FIXTURE_PATH"] = fixture_path
+        os.environ["UNBUNDLED_FIXTURE_PATH"] = fixture_path
         logger.info(f"🧪 UseErmeloFixture=ON — unbundled reads {fixture_path} (no live fetch).")
     else:
+        os.environ.pop("UNBUNDLED_FIXTURE_PATH", None)
         logger.info("🛰️ UseErmeloFixture=OFF — unbundled uses the live query.")
     return use_fixture
 # --- end UseErmeloFixture test toggle ----------------------------------------------
