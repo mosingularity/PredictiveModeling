@@ -75,6 +75,26 @@
       "justMyCode": false
     },
     {
+      "name": "ESF-SARIMA (Unbundled, Live DEV DB)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/ESF-SARIMA.py",
+      // No --mode arg + no PREDICTIVE_FIXTURE_PATH → fixture hatch no-ops and the
+      // real flow runs: init_spark attaches to the DEV cluster (DATABRICKS_SERVERLESS
+      // =false) and the unbundled Ermelo SQL is fetched live; SARIMA fitting runs
+      // locally. UNBUNDLED=true selects the unbundled path; task 2 is the SARIMA UFM.
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "ENV": "DEV",
+        "UNBUNDLED": "true",
+        "DATABRICK_TASK_ID": "2",
+        "DATABRICKS_SERVERLESS": "false"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "Load Ermelo CSVs (Real Data)",
       "type": "debugpy",
       "request": "launch",
