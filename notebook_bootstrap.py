@@ -93,10 +93,20 @@ def assert_local_workspace(spark, dev_workspace_id=DEV_WORKSPACE_ID):
 
 
 def resolve_task_id(dbutils, default="2"):
-    """Local: DATABRICK_TASK_ID env (default 2). Cluster: the DatabrickTaskID widget."""
+    """Local: DATABRICK_TASK_ID env (default 2). Cluster: the DatabrickTaskID widget.
+
+    Declares the widget (with a default) before reading it, so it renders on an
+    interactive cluster run too — a job that passes the parameter still overrides
+    the value. Mirrors resolve_unbundled's declare-then-get pattern.
+    """
     if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         return int(os.environ.get("DATABRICK_TASK_ID", default))
-    return int(dbutils.widgets.get("DatabrickTaskID"))
+    try:
+        dbutils.widgets.text("DatabrickTaskID", default, "DatabrickTaskID")
+        return int(dbutils.widgets.get("DatabrickTaskID"))
+    except Exception:
+        # Widget machinery unavailable / undefined → fall back to the default.
+        return int(default)
 
 
 def _truthy(value):
