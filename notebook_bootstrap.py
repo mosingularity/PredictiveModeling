@@ -26,15 +26,30 @@ def resolve_env():
     logger.info(f"🌍 ENV resolved to {os.environ['ENV']} ({where}).")
 
 
+def _get_dbutils(spark):
+    """A dbutils handle that works in both contexts.
+
+    On a Databricks cluster ``pyspark.dbutils.DBUtils`` exists; under local
+    databricks-connect it does not, so fall back to the SDK's
+    ``WorkspaceClient().dbutils`` (unified auth — reads DATABRICKS_CONFIG_PROFILE).
+    """
+    try:
+        from pyspark.dbutils import DBUtils
+        return DBUtils(spark)
+    except (ImportError, ModuleNotFoundError):
+        from databricks.sdk import WorkspaceClient
+        return WorkspaceClient().dbutils
+
+
 def init_spark():
     """databricks-connect locally, SparkSession on a cluster; best-effort log level."""
     from pyspark.sql import SparkSession
-    from pyspark.dbutils import DBUtils
     if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         from databricks.connect import DatabricksSession
         spark = DatabricksSession.builder.getOrCreate()
     else:
         spark = SparkSession.builder.appName("Energy Consumption Prediction").getOrCreate()
+    dbutils = _get_dbutils(spark)
     try:
         spark.sparkContext.setLogLevel("ERROR")
     except Exception:
@@ -45,7 +60,7 @@ def init_spark():
     except Exception:
         ws = "<unknown>"
     logger.info(f"⚡ Spark session ready — workspace '{ws}'.")
-    return spark, DBUtils(spark)
+    return spark, dbutils
 
 
 def assert_local_workspace(spark, dev_workspace_id=DEV_WORKSPACE_ID):
@@ -57,6 +72,14 @@ def assert_local_workspace(spark, dev_workspace_id=DEV_WORKSPACE_ID):
         workspace_url = spark.conf.get("spark.databricks.workspaceUrl", "")
     except Exception:
         pass
+    if not workspace_url:
+        # databricks-connect doesn't expose workspaceUrl on spark.conf — resolve the
+        # configured host from the SDK (reads DATABRICKS_CONFIG_PROFILE) / env instead.
+        try:
+            from databricks.sdk import WorkspaceClient
+            workspace_url = WorkspaceClient().config.host or ""
+        except Exception:
+            workspace_url = os.environ.get("DATABRICKS_HOST", "")
     assert dev_workspace_id in workspace_url, (
         f"Refusing to run locally — expected DEV ({dev_workspace_id}), "
         f"got workspace '{workspace_url}'. Check DATABRICKS_CLUSTER_ID in .env."
