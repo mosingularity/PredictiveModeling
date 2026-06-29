@@ -93,7 +93,10 @@ dataset.ufm_config
 
 # COMMAND ----------
 
-dataset.load_data()
+# load_data prepares the BUNDLED (customer/pod) frame and assumes PodID/CustomerID;
+# the unbundled path fetches its own entity-keyed data, so skip it there.
+if not unbundled:
+    dataset.load_data()
 
 save_fixture(dataset)
 # COMMAND ----------
