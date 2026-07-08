@@ -13,11 +13,10 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
-from notebook_bootstrap import (resolve_env, bootstrap_run, run_forecast,
+from notebook_bootstrap import (bootstrap_run, run_forecast,
                                  render_unbundled)
 # ENV picks the config.yaml section and DB host. An explicit ENV always wins;
 # otherwise DEV locally (databricks-connect), PROD on a Databricks cluster.
-resolve_env()
 
 
 # COMMAND ----------
