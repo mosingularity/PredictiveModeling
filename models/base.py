@@ -8,8 +8,11 @@ class ForecastModel:
 
         self.dataset = dataset
         self.config = config
-        # Ensure that the dataset is loaded and preprocessed.
-        if self.dataset.processed_df.empty:
+        # Bundled runs require a loaded/preprocessed frame; the unbundled path does
+        # NOT load processed_df (it fetches its own entity-keyed data and only needs
+        # ufm_config), so only validate when a frame is present. run_bundled re-checks
+        # None/empty itself before using it.
+        if self.dataset.processed_df is not None and self.dataset.processed_df.empty:
             raise ValueError("Dataset must be loaded and preprocessed before initializing the model.")
 
     def prepare_data(self):

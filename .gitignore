@@ -1,13 +1,17 @@
 python library/
 databricks_support/
-
+bundle-forecasting/
 # Local environment overrides — never commit
 .env
 .env.*
 !.env.example
-
-# VS Code workspace state
+/env
+illuminate-output/
+demos/
+# VS Code workspace state — local dev only (the code runs directly / on Databricks)
 .vscode/*.log
+.vscode/settings.json
+.vscode/launch.json
 
 # Python caches
 __pycache__/
@@ -17,3 +21,28 @@ __pycache__/
 
 # Local conda/micromamba envs accidentally created in-tree
 dbx-connect/
+
+# Generated content-addressed results packs (results-analysis)
+results_packs/
+
+# Local workspace, planning, and assistant scratch — never commit
+.claude/
+.sixth/
+learning/
+databricks-e2e/
+unbundled-modelling/
+ci-cd-ado/
+
+# Real-data fixtures — derived from live DB calls; never commit customer data.
+# Databricks runs against the real DB; these CSVs are local-dev/QA artifacts only.
+data/fixtures/Results*.csv
+data/unbundled_real_ermelo/
+data/unbundled_synthetic_clean/
+data/fixtures/unbundled_synthetic_clean.csv
+
+# Coverage output
+.coverage
+
+# Playwright MCP session artifacts (screenshots, snapshots)
+.playwright-mcp/
+podid-dashboard-*.png

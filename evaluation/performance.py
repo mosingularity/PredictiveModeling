@@ -1,29 +1,7 @@
 from dataclasses import dataclass, field
 import numpy as np
 from typing import Dict, List, Optional, Union, Any
-import shap
-from sklearn.inspection import permutation_importance, PartialDependenceDisplay
 import pandas as pd
-from sklearn.model_selection import learning_curve
-import matplotlib.pyplot as plt
-import logging
-# Setup logger
-logging.basicConfig(level=logging.INFO)
-@dataclass
-class PerformanceData:
-    forecast_method_name: str
-    customer_id: str
-    pod_id: str
-    user_forecast_method_id: int
-    metrics: Dict[str, float ] = field(default_factory=dict)
-
-    def log_metric(self, metric: str, value: float, alternative: str = None, consumption_type: str = None):
-        if alternative is None:
-            key = f'{metric}_{consumption_type}' if consumption_type is not None else f'{metric}'
-            self.metrics[key] = value
-        else:
-            key = f'{metric}_{consumption_type}_{alternative}' if consumption_type is not None else f'{metric}'
-            self.metrics[key] = value
 import math
 
 @dataclass
@@ -78,87 +56,6 @@ class ModelPodPerformance:
 
 import pandas as pd
 from typing import Optional, List
-
-def finalize_model_performance_df(
-    df_long: pd.DataFrame,
-    model_name: str,
-    databrick_id: Optional[int],
-    user_forecast_method_id: int,
-    consumption_order: Optional[List[str]] = None
-) -> pd.DataFrame:
-    """
-    Pivot a long-format performance DataFrame into a wide schema matching example.csv,
-    dynamically creating columns only for consumption types present in df_long.
-
-    Parameters:
-    - df_long: DataFrame with columns ['pod_id','customer_id','consumption_type','RMSE','R2',...]
-    - model_name: name of the forecasting model
-    - databrick_id: optional DataBrick warehouse/SQL endpoint ID
-    - user_forecast_method_id: ID of the user forecast method
-    - consumption_order: optional list defining desired column order for consumption types;
-        if None, uses the unique order in df_long.
-
-    Returns:
-    - A DataFrame with columns in the order:
-      [ModelName, CustomerID, PodID, DataBrickID, UserForecastMethodID,
-       RMSE_<ctype> and R2_<ctype> for each ctype in consumption_order or present,
-       RMSE_Avg, R2_Avg]
-    """
-    # Determine which consumption types to include
-    present = list(df_long['consumption_type'].unique())
-    if consumption_order:
-        # respect provided order, but only include those present
-        types = [ct for ct in consumption_order if ct in present]
-    else:
-        types = present
-
-    # Pivot RMSE and R2 into wide format
-    pivot = df_long.pivot_table(
-        index=['pod_id', 'customer_id'],
-        columns='consumption_type',
-        values=['RMSE', 'R2'],
-        aggfunc='first'
-    )
-    # Flatten column MultiIndex: ('RMSE','PeakConsumption') -> 'RMSE_PeakConsumption'
-    pivot.columns = [f"{metric}_{ctype}" for metric, ctype in pivot.columns]
-    pivot = pivot.reset_index()
-
-    # Compute average metrics
-    rmse_cols = [f"RMSE_{ct}" for ct in types]
-    r2_cols   = [f"R2_{ct}"   for ct in types]
-    if rmse_cols:
-        pivot['RMSE_Avg'] = pivot[rmse_cols].mean(axis=1)
-    else:
-        pivot['RMSE_Avg'] = pd.NA
-    if r2_cols:
-        pivot['R2_Avg']   = pivot[r2_cols].mean(axis=1)
-    else:
-        pivot['R2_Avg'] = pd.NA
-
-    # Add metadata columns
-    pivot['ModelName']           = model_name
-    pivot['DataBrickID']         = databrick_id
-    pivot['UserForecastMethodID'] = user_forecast_method_id
-
-    # Rename index columns to match example.csv
-    pivot.rename(
-        columns={'customer_id': 'CustomerID', 'pod_id': 'PodID'},
-        inplace=True
-    )
-
-    # Build final column order
-    column_order = [
-        'ModelName', 'CustomerID', 'PodID', 'DataBrickID', 'UserForecastMethodID',
-    ] + rmse_cols + r2_cols + ['RMSE_Avg', 'R2_Avg']
-
-    # Filter out any missing columns (in case some types were absent)
-    column_order = [c for c in column_order if c in pivot.columns]
-
-    # Reindex and reset index
-    result = pivot[column_order].copy()
-    result.reset_index(drop=True, inplace=True)
-    return result
-
 
 import pandas as pd
 from typing import Dict, List, Any, Union
@@ -289,75 +186,82 @@ class CustomerPerformanceData:
 
         return pod_filtered
 
-def get_performance_data(forecast_method_name: str, customer_id: str, pod_id: str, user_forecast_method_id: int) -> PerformanceData:
-    return PerformanceData(forecast_method_name, customer_id, pod_id, user_forecast_method_id)
+@dataclass
+class PredictionUnit:
+    entity_id: str          # the PodID on the PodID contract
+    entity_type: str        # legacy label; "" on the PodID contract (retirement decided in the preview plan)
+    tariff_type: str        # passthrough metadata ("Consumption" on the PodID contract)
+    customer_id: str
+    tariff_id: int
+    series: pd.DataFrame    # indexed by ReportingMonth, sorted ascending
 
+@dataclass
+class EntityPerformanceData:
+    entity_id: str
+    entity_type: str
+    tariff_type: str
+    customer_id: str
+    forecast_method_name: str
+    user_forecast_method_id: int
+    performance_data_frame: pd.DataFrame
+    tariff_id: int = 0
 
-def most_frequent_params(params_list):
-    """Select most common params from CV results"""
-    param_counts = {}
-    for params in params_list:
-        for k, v in params.items():
-            param_counts.setdefault(k, {}).update({v: param_counts.get(k, {}).get(v, 0) + 1})
-    return {k: max(v.items(), key=lambda x: x[1])[0] for k, v in param_counts.items()}
+@dataclass
+class UnbundledResults:
+    forecast_method_name: str
+    entity_performance: List[EntityPerformanceData] = field(default_factory=list)
 
-def generate_diagnostics(model, X, y, feature_names, verbose: bool = False):
-    """Comprehensive model interpretation"""
+    def get_performance_data(self) -> pd.DataFrame:
+        # Stamp the pod identity onto every output row. The per-pod performance
+        # frame is keyed by pod_id/consumption_type only; PodID, TariffType and
+        # TariffID live on the wrapper, so inject them here (the single
+        # flattening point).
+        frames = []
+        for e in self.entity_performance:
+            pdf = e.performance_data_frame
+            if pdf is None or len(pdf) == 0:
+                continue
+            pdf = pdf.assign(
+                PodID=e.entity_id,
+                TariffType=e.tariff_type,
+                TariffID=e.tariff_id,
+            )
+            frames.append(pdf)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-    # Gini Importance
-    importance_df = pd.DataFrame({
-        'feature': feature_names,
-        'gini': model.feature_importances_,
-        'permutation': permutation_importance(model, X, y, n_repeats=10).importances_mean
-    }).sort_values(by='gini', ascending=False)
-    print("Feature Importance:", importance_df)
+    def to_forecast_fact(self) -> pd.DataFrame:
+        """Mold the per-pod forecasts into the ForecastFact write-shape WITHOUT writing.
 
-    # SHAP Analysis
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    shap.summary_plot(shap_values, X, feature_names=feature_names)
-
-    # Partial Dependence
-    for feature in feature_names[:3]:
-        PartialDependenceDisplay.from_estimator(
-            model, X, [feature],
-            kind='both',
-            subsample=1000,
-            n_jobs=-1
-        )
-    if verbose:
-        train_sizes, train_scores, test_scores = learning_curve(model, X, y, cv=5, scoring='neg_mean_squared_error')
-        plt.plot(train_sizes, -np.mean(train_scores, axis=1), label='Training error')
-        plt.plot(train_sizes, -np.mean(test_scores, axis=1), label='Validation error')
-        plt.xlabel('Training size')
-        plt.ylabel('MSE')
-        plt.legend()
-        plt.title('Learning Curve')
-        plt.show()
-
-        # OOB Error Tracking
-        oob_scores = [estimator.oob_score_ for estimator in model.estimators_]
-        plt.plot(oob_scores)
-        plt.title('OOB Error During Training')
-        plt.xlabel('Number of Trees')
-        plt.ylabel('OOB Score')
-
-# Performance Reporting
-def report_performance(scores):
-    """
-    Report and log the average performance metrics over outer folds.
-
-    Returns:
-      - dict: Aggregated performance metrics (MAE, RMSE, R², MAPE).
-    """
-    mae_avg = np.mean([s["mae"] for s in scores])
-    rmse_avg = np.mean([s["rmse"] for s in scores])
-    r2_avg = np.mean([s["r2"] for s in scores])
-
-    performance = {
-        "MAE": mae_avg,
-        "RMSE": rmse_avg,
-        "R2": r2_avg
-    }
-    logging.info(f"Final Model Performance: {performance}")
-    return performance
+        Reuses the SAME molder the bundled writer uses (:func:`build_forecast_df`): one
+        row per ReportingMonth, a column per consumption type, keyed by
+        PodID/CustomerID/UserForecastMethodID. ``entity_id`` IS the PodID on the PodID
+        contract, so it feeds the molder directly — no alias column is carried.
+        TariffType ("Consumption") and TariffID ride along as passthrough metadata.
+        UserForecastMethodID comes from the run's ForecastConfig (the UFMID the
+        ``PredictiveInputData(UFMID)`` query was issued with), not from the input rows —
+        one source, so preview rows carry e.g. 421 consistently. This is a
+        display/validation preview of what the bundled writer would persist — the
+        unbundled path itself performs no DB writes. A per-pod molding failure is
+        skipped rather than fatal.
+        """
+        frames = []
+        for e in self.entity_performance:
+            pdf = e.performance_data_frame
+            if pdf is None or len(pdf) == 0 or "consumption_type" not in pdf.columns:
+                continue
+            try:
+                forecast_map = pdf.set_index("consumption_type")["forecast"].to_dict()
+                wide = build_forecast_df(
+                    forecast_map,
+                    customer_id=e.customer_id,
+                    pod_id=e.entity_id,
+                    cons_types=list(forecast_map.keys()),
+                    user_forecast_method_id=e.user_forecast_method_id,
+                ).assign(
+                    TariffType=e.tariff_type,
+                    TariffID=e.tariff_id,
+                )
+                frames.append(wide)
+            except Exception:
+                continue
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
