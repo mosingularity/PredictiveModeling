@@ -18,12 +18,16 @@ DEV_WORKSPACE_ID = "adb-7405614865299820"
 
 
 def resolve_env():
-    """Default ENV by where we run, without clobbering an injected value."""
-    os.environ.setdefault(
-        "ENV", "PROD" if os.environ.get("DATABRICKS_RUNTIME_VERSION") else "DEV"
-    )
-    where = "cluster" if os.environ.get("DATABRICKS_RUNTIME_VERSION") else "local databricks-connect"
-    logger.info(f"🌍 ENV resolved to {os.environ['ENV']} ({where}).")
+    """ENV selects which SQL Server config.yaml points at (DEV/UAT/QA/PROD).
+
+    It comes straight from the environment — each Databricks cluster sets ``ENV`` in
+    its config once (DEV cluster → ``ENV=DEV``, QA cluster → ``ENV=QA``, PROD cluster
+    → ``ENV=PROD``); locally ``.env`` sets it. Defaults to DEV when unset, so a
+    misconfigured run never silently reads/writes prod.
+    """
+    env = os.environ.setdefault("ENV", "DEV")
+    logger.info(f"🌍 ENV = {env}.")
+    return env
 
 
 def _get_dbutils(spark):
@@ -162,9 +166,10 @@ def bootstrap_run(method_id, method_name, forecast_unbundled_fn, config):
 
     1. :func:`maybe_run_offline` — if this is an offline fixture run, forecast
        locally and ``sys.exit(0)`` before any Spark/cluster/DB is touched.
-    2. :func:`init_spark` + ``set_dbutils`` + :func:`assert_local_workspace` —
-       attach to the cluster (DEV via databricks-connect locally, the job's
-       SparkSession on Databricks) and refuse to run against the wrong workspace.
+    2. :func:`resolve_env` (ENV → which DB, from the cluster's own env var) +
+       :func:`init_spark` + ``set_dbutils`` + :func:`assert_local_workspace` — attach
+       to the cluster (DEV via databricks-connect locally, the job's SparkSession on
+       Databricks) and refuse the wrong workspace locally.
     3. :func:`resolve_task_id` + :func:`resolve_unbundled` — read the DatabrickTaskID
        and Unbundled widgets (env vars locally).
     4. ``ForecastDataset(task_id, spark)`` — resolves the UFM config from the DB;
@@ -179,6 +184,7 @@ def bootstrap_run(method_id, method_name, forecast_unbundled_fn, config):
     from data.dataset import ForecastDataset
     from utils.dbutils_singleton import set_dbutils
 
+    resolve_env()
     maybe_run_offline(method_id, method_name, forecast_unbundled_fn, config)
     spark, dbutils = init_spark()
     set_dbutils(dbutils)
