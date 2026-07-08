@@ -1,7 +1,6 @@
 # dml_timeseries.py
 
 import logging
-from pyspark.dbutils import DBUtils
 from typing import Tuple, List, Optional, Any, Union
 from pyspark.sql import DataFrame, SparkSession
 from db.queries import ForecastConfig, get_actual_data, get_predictive_data
@@ -9,9 +8,7 @@ from pyspark.sql.functions import col, to_date, expr, explode, array, lit, when,
 from pyspark.sql.window import Window
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from docstring.utilities import profiled_function
-from profiler.errors.utils import get_error_metadata
-from profiler.profiler_switch import profiling_switch
+from validation.metadata import get_error_metadata
 from pyspark.sql import DataFrame as SparkDataFrame
 import pandas as pd
 
@@ -20,13 +17,14 @@ logging.basicConfig(level=logging.INFO)
 import os 
 
 
-@profiled_function(category="extract_transform_and_load", enabled=profiling_switch.enabled)
 def convert_to_pandas(df: SparkDataFrame) -> pd.DataFrame:
     """
     Function: Convert the dataframe to pandas 
     Returns: A pandas dataframe that contains all the filtered data
     Raises: ValueError: If the data loaded from the database is empty.
     """
+    if isinstance(df, pd.DataFrame):
+        return df  # already pandas (e.g. the PREDICTIVE_FIXTURE_PATH path)
     row_count = df.count()
     logging.info(f"📊 Converting Spark DF with {row_count} rows to Pandas.")
     try:
@@ -69,7 +67,9 @@ def load_and_prepare_data(
     else:
         logging.info(f"📥 Querying source via JDBC and saving to: {path}")
         df = get_actual_data(spark, rows) if actual else get_predictive_data(spark, ufm_config.user_forecast_method_id)
-    if df.rdd.isEmpty():
+    # get_predictive_data returns pandas on the fixture path, Spark otherwise.
+    is_empty = df.empty if isinstance(df, pd.DataFrame) else df.isEmpty()
+    if is_empty:
         logging.warning("🚫 No data retrieved — returning None")
         return None  # ✅ Let the caller handle logging + exit
         

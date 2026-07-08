@@ -1,58 +1,41 @@
 from pyspark.sql import DataFrame, SparkSession
 from .utilities import read_sql_query,get_jdbc_options
-from profiler.profiler_switch import profiling_switch
-from docstring.utilities import profiled_function
 from dataclasses import dataclass
 import pandas as pd 
 import logging
-from .spark_session import get_spark_session
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, TimestampType, FloatType, LongType
 
 logger = logging.getLogger(__name__)
 
-def insert_profiling_error(*, log_id, error, traceback, error_type, severity, component, config_path="config.yaml"):
-    spark = get_spark_session()  # Internally obtain singleton SparkSession
-    jdbc_url, user, password = get_jdbc_options(config_path)
-
-    error_record = [{
-        "ProfilingLogID": log_id,
-        "Traceback": traceback,
-        "Severity": severity or "medium",
-        "ErrorType": error_type,
-        "Component": component,
-        "Error": error
-    }]
-    
-    # Explicit schema for Spark
-    schema = StructType([
-        StructField("ProfilingLogID", IntegerType(), True),
-        StructField("Traceback", StringType(), True),
-        StructField("Severity", StringType(), True),
-        StructField("ErrorType", StringType(), True),
-        StructField("Component", StringType(), True),
-        StructField("Error", StringType(), True),
-    ])
-
-    try:
-        logger.info(f"Inserting profiling error record: {error_record}")
-        df = spark.createDataFrame(error_record, schema=schema)
-        df.write.format("jdbc") \
-            .option("url", jdbc_url) \
-            .option("dbtable", "dbo.PredictiveProfilingErrors") \
-            .option("user", user) \
-            .option("password", password) \
-            .mode("append") \
-            .save()
-        logger.info("✅ Profiling error inserted via Spark JDBC.")
-    except Exception as e:
-        logger.error(f"❌ Failed JDBC insertion of profiling error: {e}")
-        raise  # Re-raise for visibility/debugging
-
-def get_sample_rows(spark: SparkSession, table_name="dbo.DataBrickTasks", limit=5) -> DataFrame:
-    query = f"SELECT TOP {limit} * FROM {table_name}"
+def get_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
+    import os
+    fixture_path = os.getenv("PREDICTIVE_FIXTURE_PATH")
+    if fixture_path:
+        return pd.read_parquet(fixture_path)
+    query = f"SELECT * FROM dbo.PredictiveInputData({UFMID})"
     return read_sql_query(query, spark)
 
-def get_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
+
+def get_unbundled_predictive_data(spark: SparkSession, UFMID=64) -> DataFrame:
+    """PodID-keyed predictive data — the unbundled analogue of
+    :func:`get_predictive_data`, backed by the same ``dbo.PredictiveInputData``
+    function.
+
+    Honors ``UNBUNDLED_FIXTURE_PATH`` (unbundled-only override) then
+    ``PREDICTIVE_FIXTURE_PATH`` for local testing, loading ``.csv`` fixtures
+    (e.g. ``data/fixtures/Results.csv`` = PredictiveInputData(421)) or parquet
+    as pandas. Otherwise issues a single ``PredictiveInputData(UFMID)`` call.
+    """
+    import os
+    # The dedicated UNBUNDLED_FIXTURE_PATH exists so the UseErmeloFixture toggle
+    # can redirect this loader without also redirecting the bundled load_data(),
+    # which reads PREDICTIVE_FIXTURE_PATH and expects the bundled parquet sample.
+    fixture_path = os.getenv("UNBUNDLED_FIXTURE_PATH") or os.getenv("PREDICTIVE_FIXTURE_PATH")
+    if fixture_path:
+        if fixture_path.endswith(".csv"):
+            # utf-8-sig strips the BOM Results.csv carries on its header.
+            return pd.read_csv(fixture_path, encoding="utf-8-sig")
+        return pd.read_parquet(fixture_path)
     query = f"SELECT * FROM dbo.PredictiveInputData({UFMID})"
     return read_sql_query(query, spark)
 
