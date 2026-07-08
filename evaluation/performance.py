@@ -236,7 +236,6 @@ class UnbundledResults:
         row per ReportingMonth, a column per consumption type, keyed by
         PodID/CustomerID/UserForecastMethodID. ``entity_id`` IS the PodID on the PodID
         contract, so it feeds the molder directly — no alias column is carried.
-        TariffType ("Consumption") and TariffID ride along as passthrough metadata.
         UserForecastMethodID comes from the run's ForecastConfig (the UFMID the
         ``PredictiveInputData(UFMID)`` query was issued with), not from the input rows —
         one source, so preview rows carry e.g. 421 consistently. This is a
@@ -257,9 +256,6 @@ class UnbundledResults:
                     pod_id=e.entity_id,
                     cons_types=list(forecast_map.keys()),
                     user_forecast_method_id=e.user_forecast_method_id,
-                ).assign(
-                    TariffType=e.tariff_type,
-                    TariffID=e.tariff_id,
                 )
                 frames.append(wide)
             except Exception:

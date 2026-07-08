@@ -46,11 +46,12 @@ def test_to_forecast_fact_write_shape():
     ])
     ff = res.to_forecast_fact()
     for col in ("PodID", "UserForecastMethodID", "CustomerID", "ReportingMonth",
-                "PeakConsumption", "StandardConsumption",
-                "TariffType", "TariffID"):
+                "PeakConsumption", "StandardConsumption"):
         assert col in ff.columns, f"missing ForecastFact column {col!r}"
     assert "EntityID" not in ff.columns                  # no alias column on the PodID contract
     assert "EntityType" not in ff.columns
+    assert "TariffType" not in ff.columns                # removed from ForecastFact schema
+    assert "TariffID" not in ff.columns
     assert len(ff) == 3                                  # one row per ReportingMonth
     assert (ff["PodID"] == "0404.GENWHE").all()         # entity_id IS the PodID
     assert (ff["UserForecastMethodID"] == 370).all()
@@ -58,14 +59,13 @@ def test_to_forecast_fact_write_shape():
     assert list(ff.sort_values("ReportingMonth")["ReportingMonth"]) == list(DATES)
 
 
-def test_to_forecast_fact_row_count_and_tariffs():
+def test_to_forecast_fact_row_count_and_pods():
     res = UnbundledResults("SARIMA", [
         _entity("E1", "", "Consumption", "T1", {"PeakConsumption": [1, 2, 3]}),
         _entity("E2", "", "Consumption", "T2", {"PeakConsumption": [7, 8, 9]}),
     ])
     ff = res.to_forecast_fact()
     assert len(ff) == 6                                  # 2 pods x 3 periods
-    assert set(ff["TariffType"]) == {"Consumption"}      # passthrough metadata
     assert set(ff["PodID"]) == {"E1", "E2"}
 
 
