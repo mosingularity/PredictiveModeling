@@ -1,10 +1,11 @@
 """
 Tests for the unbundled ForecastFact-shaped preview
-(``UnbundledResults.to_forecast_fact``) and the unbundled **no-write** contract.
+(``ForecastResults.to_forecast_fact``) and the unbundled **no-write** contract.
 
-All in-memory: successful formatting, missing/invalid fields, and persistence
-behaviour are exercised with synthetic ``EntityPerformanceData`` and a mocked
-``jdbc_write`` boundary — there is no live database and nothing is ever persisted.
+All in-memory: successful formatting, missing/invalid fields, and the no-write
+contract are exercised with synthetic ``EntityPerformanceData`` — there is no live
+database, and after the legacy bundled writer was retired there is no DB-write
+boundary left to reach at all.
 
 Run from the project root:
     pytest tests/test_forecast_fact_preview.py -v
@@ -19,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from evaluation.performance import EntityPerformanceData, UnbundledResults
+from evaluation.performance import EntityPerformanceData, ForecastResults
 
 DATES = pd.to_datetime(["2026-04-01", "2026-05-01", "2026-06-01"])
 
@@ -40,7 +41,7 @@ def _entity(entity_id, entity_type, tariff_type, tariff_id, channels,
 # ── 1. successful formatting ─────────────────────────────────────────────────────
 
 def test_to_forecast_fact_write_shape():
-    res = UnbundledResults("SARIMA", [
+    res = ForecastResults("SARIMA", [
         _entity("0404.GENWHE", "", "Consumption", "BUSS123",
                 {"PeakConsumption": [1, 2, 3], "StandardConsumption": [4, 5, 6]}),
     ])
@@ -60,7 +61,7 @@ def test_to_forecast_fact_write_shape():
 
 
 def test_to_forecast_fact_row_count_and_pods():
-    res = UnbundledResults("SARIMA", [
+    res = ForecastResults("SARIMA", [
         _entity("E1", "", "Consumption", "T1", {"PeakConsumption": [1, 2, 3]}),
         _entity("E2", "", "Consumption", "T2", {"PeakConsumption": [7, 8, 9]}),
     ])
@@ -77,22 +78,24 @@ def test_to_forecast_fact_skips_invalid_entities():
     none_pdf = EntityPerformanceData("E3", "", "Consumption", "", "SARIMA", 370, None, 0)
     no_ct_col = EntityPerformanceData("E4", "", "Consumption", "", "SARIMA", 370,
                                       pd.DataFrame({"value": [1.0]}), 0)
-    res = UnbundledResults("SARIMA", [good, empty_pdf, none_pdf, no_ct_col])
+    res = ForecastResults("SARIMA", [good, empty_pdf, none_pdf, no_ct_col])
     ff = res.to_forecast_fact()
     assert set(ff["PodID"]) == {"E1"}                    # invalid pods skipped, not fatal
 
 
 def test_to_forecast_fact_empty_results_returns_empty_df():
-    ff = UnbundledResults("SARIMA", []).to_forecast_fact()
+    ff = ForecastResults("SARIMA", []).to_forecast_fact()
     assert isinstance(ff, pd.DataFrame) and ff.empty
 
 
 # ── 3. persistence behaviour: the unbundled path performs NO db write ────────────
 
 def test_unbundled_path_never_writes_to_db():
-    """run_unbundled + to_forecast_fact must never invoke the jdbc_write boundary —
-    the unbundled Ermelo path is display-only (DoD #2). Verified with a spy, no DB."""
-    from models.algorithms import _unbundled
+    """run_unbundled + to_forecast_fact produce write-ready rows without ever
+    persisting — the unbundled Ermelo path is display-only (DoD #2). After the legacy
+    bundled stack was retired the repo has no DB-write boundary to reach at all, so
+    running the loop end to end simply cannot write."""
+    from models.algorithms import unbundled
 
     data = pd.DataFrame({
         "PodID": ["E1"] * 3, "TariffType": ["Consumption"] * 3,
@@ -108,14 +111,10 @@ def test_unbundled_path_never_writes_to_db():
         return _entity(unit.entity_id, unit.entity_type, unit.tariff_type, "T1",
                        {"PeakConsumption": [1, 2, 3]})
 
-    import db.utilities
-    writes = []
-    with patch.object(db.utilities, "jdbc_write", lambda *a, **k: writes.append(a)), \
-         patch.object(_unbundled, "get_unbundled_predictive_data", return_value=data), \
-         patch.object(_unbundled, "validate_series", return_value=(True, "ok")):
-        res = _unbundled.run_unbundled(model, spark=None, forecast_for_entity=_stub_forecast)
+    with patch.object(unbundled, "get_unbundled_predictive_data", return_value=data), \
+         patch.object(unbundled, "validate_series", return_value=(True, "ok")):
+        res = unbundled.run_unbundled(model, spark=None, forecast_for_entity=_stub_forecast)
         ff = res.to_forecast_fact()
 
-    assert writes == []                                  # no DB writes on the unbundled path
-    assert not ff.empty                                  # yet it DID produce write-ready rows
+    assert not ff.empty                                  # it DID produce write-ready rows
     assert (ff["PodID"] == "E1").all()

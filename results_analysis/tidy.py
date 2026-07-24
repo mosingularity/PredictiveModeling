@@ -39,7 +39,7 @@ from typing import Optional
 
 import pandas as pd
 
-from evaluation.performance import EntityPerformanceData, UnbundledResults
+from evaluation.performance import EntityPerformanceData, ForecastResults
 
 # Full ordered column set of the tidy contract.
 TIDY_COLUMNS = [
@@ -96,13 +96,13 @@ def _first_present(row: pd.Series, keys) -> Optional[object]:
 
 
 def to_tidy(
-    results: UnbundledResults,
+    results: ForecastResults,
     *,
     param_set_id: str = DEFAULT_PARAM_SET_ID,
 ) -> pd.DataFrame:
-    """Flatten an ``UnbundledResults`` into the tidy forecast contract.
+    """Flatten an ``ForecastResults`` into the tidy forecast contract.
 
-    Non-invasive: this reads only the public ``UnbundledResults`` /
+    Non-invasive: this reads only the public ``ForecastResults`` /
     ``EntityPerformanceData`` shapes — the nested ``forecast`` Series inside each
     ``performance_data_frame`` row plus the entity identifiers on the wrapper. It
     touches no runner internals and produces point-only, actual-free rows
@@ -115,7 +115,7 @@ def to_tidy(
 
     Parameters
     ----------
-    results : UnbundledResults
+    results : ForecastResults
         A single model's unbundled run (one ``forecast_method_name``).
     param_set_id : str, optional
         Label for this run's hyperparameter set. Defaults to ``"default"`` for a

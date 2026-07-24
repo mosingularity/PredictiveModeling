@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db.queries import ForecastConfig
-from evaluation.performance import EntityPerformanceData, PredictionUnit, UnbundledResults
+from evaluation.performance import EntityPerformanceData, PredictionUnit, ForecastResults
 from results_analysis.tidy import to_tidy
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ def _forecast(model_name: str, unit: PredictionUnit, ufm_config, forecast_model=
 
 def _tidy(epd: EntityPerformanceData, model_name: str) -> pd.DataFrame:
     """Flatten one entity's result through the production tidy adapter."""
-    results = UnbundledResults(forecast_method_name=model_name)
+    results = ForecastResults(forecast_method_name=model_name)
     results.entity_performance.append(epd)
     return to_tidy(results)
 

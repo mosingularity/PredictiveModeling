@@ -107,7 +107,7 @@ def test_unbundled_query_module_stays_retired():
 import types
 
 from evaluation.performance import EntityPerformanceData
-from models.algorithms import _unbundled
+from models.algorithms import unbundled
 
 
 def _podid_frame(ufmid=422):
@@ -138,8 +138,8 @@ def _stub_forecast(unit, ufm_config, m):
 
 def test_save_hook_writes_results_csv_when_flag_set(monkeypatch, tmp_path):
     monkeypatch.setenv("SAVE_UNBUNDLED_FIXTURE", str(tmp_path / "Results_422.csv"))
-    with patch.object(_unbundled, "get_unbundled_predictive_data", return_value=_podid_frame(422)):
-        _unbundled.run_unbundled(_model_stub(422), spark=None, forecast_for_entity=_stub_forecast)
+    with patch.object(unbundled, "get_unbundled_predictive_data", return_value=_podid_frame(422)):
+        unbundled.run_unbundled(_model_stub(422), spark=None, forecast_for_entity=_stub_forecast)
     out = tmp_path / "Results_422.csv"
     assert out.exists()
     saved = pd.read_csv(out)
@@ -151,6 +151,6 @@ def test_save_hook_noop_when_flag_unset(monkeypatch, tmp_path):
     monkeypatch.delenv("SAVE_UNBUNDLED_FIXTURE", raising=False)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data" / "fixtures").mkdir(parents=True)
-    with patch.object(_unbundled, "get_unbundled_predictive_data", return_value=_podid_frame(422)):
-        _unbundled.run_unbundled(_model_stub(422), spark=None, forecast_for_entity=_stub_forecast)
+    with patch.object(unbundled, "get_unbundled_predictive_data", return_value=_podid_frame(422)):
+        unbundled.run_unbundled(_model_stub(422), spark=None, forecast_for_entity=_stub_forecast)
     assert list((tmp_path / "data" / "fixtures").iterdir()) == []   # nothing written

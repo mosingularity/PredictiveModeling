@@ -64,6 +64,7 @@ def build_forecast_figure(
     title: Optional[str] = None,
     show_ci: bool = False,
     models: Optional[List[str]] = None,
+    bundled: Optional[Dict[str, pd.Series]] = None,
 ) -> go.Figure:
     """One subject's forecast view: actual + each model (solid fit, dotted forecast).
 
@@ -71,6 +72,12 @@ def build_forecast_figure(
     ``model``/``ds``/``y_hat``/``is_forecast`` and the real metric columns).
     ``actuals`` is the observed series (from the raw input), drawn as the solid
     reference line. Solid = in-sample (``is_forecast=False``); dotted = forecast.
+
+    ``bundled`` optionally maps model → this subject's **disaggregated** share of the
+    bundle forecast: the bundle was fitted as one aggregate, then split back to members,
+    and this is this member's slice. Drawn dash-dot in the same per-model colour, so the
+    comparison that matters — the same pod forecast two ways — sits on one axis. Toggle
+    it off in the legend to get the unbundled-only view back.
     """
     tidy = validate_tidy(tidy)
     fig = go.Figure()
@@ -87,12 +94,27 @@ def build_forecast_figure(
             hovertemplate="actual: %{y:.1f}<extra></extra>",
         ))
 
-    all_models = models or sorted(tidy["model"].dropna().unique())
+    bundled = bundled or {}
+    # A bundled-only view is legitimate (the bundle path does not need the per-entity
+    # cache), so the model list is the union rather than whatever tidy happens to hold.
+    all_models = models or sorted(set(tidy["model"].dropna().unique()) | set(bundled))
     colour = {m: model_colour(m, i) for i, m in enumerate(all_models)}
     is_fc = tidy["is_forecast"].astype("boolean").fillna(True)
 
     unscored = []  # (model, reason) for fits with NaN metrics = the zero-fallback
     for model in all_models:
+        # The member's disaggregated slice of the bundle forecast — drawn before the
+        # unbundled traces so the solid actual and dotted unbundled sit on top of it.
+        b = bundled.get(model)
+        if b is not None and len(b):
+            b = b.sort_index()
+            fig.add_trace(go.Scatter(
+                x=b.index, y=b.to_numpy(), mode="lines",
+                name=f"{model} · bundled (disaggregated)", legendgroup=f"{model}-bundled",
+                line=dict(color=colour[model], width=2, dash="dashdot"), opacity=0.85,
+                hovertemplate=f"{model} bundled: %{{y:.1f}}<extra></extra>",
+            ))
+
         rows = tidy[tidy["model"] == model]
         if rows.empty:
             continue
@@ -251,3 +273,68 @@ def entity_scenarios(raw_df: pd.DataFrame, method: str = "ARIMA") -> pd.DataFram
         rows.append({"EntityID": str(entity_id), "TariffType": str(g["TariffType"].iloc[0]),
                      "scenario": classify_reason(reason), "ok": ok, "validation_reason": reason})
     return pd.DataFrame(rows, columns=["EntityID", "TariffType", "scenario", "ok", "validation_reason"])
+
+
+# ── The bundle's own pattern ─────────────────────────────────────────────────────
+
+
+def build_bundle_figure(
+    bundle_actual: pd.Series,
+    bundle_forecasts: Dict[str, pd.Series],
+    unbundled_totals: Optional[Dict[str, pd.Series]] = None,
+    *,
+    title: Optional[str] = None,
+) -> go.Figure:
+    """The bundle as a subject in its own right: its history and its aggregate forecast.
+
+    This is the series the bundled path actually fits — every member's consumption summed
+    — before any disaggregation happens. Worth seeing on its own, because the bundle can
+    be well-behaved where its members are not (that is the case *for* bundling), and the
+    per-member plot cannot show that.
+
+    ``bundle_forecasts`` maps model → the aggregate forecast. ``unbundled_totals``
+    optionally maps model → the sum of that model's per-member forecasts, which is the
+    like-for-like comparison at bundle level: same quantity, two routes to it.
+    """
+    fig = go.Figure()
+
+    if bundle_actual is not None and len(bundle_actual.dropna()):
+        a = bundle_actual.dropna().sort_index()
+        full = pd.date_range(a.index.min(), a.index.max(), freq="MS")
+        a = a.reindex(full)
+        fig.add_trace(go.Scatter(
+            x=a.index, y=a.to_numpy(), mode="lines+markers", name="actual (bundle total)",
+            line=dict(color=_ACTUAL_COLOUR, width=2), connectgaps=False,
+            hovertemplate="actual: %{y:,.0f}<extra></extra>",
+        ))
+
+    models = sorted(set(bundle_forecasts) | set(unbundled_totals or {}))
+    for i, model in enumerate(models):
+        clr = model_colour(model, i)
+        b = bundle_forecasts.get(model)
+        if b is not None and len(b):
+            b = b.sort_index()
+            fig.add_trace(go.Scatter(
+                x=b.index, y=b.to_numpy(), mode="lines+markers",
+                name=f"{model} · bundled aggregate", legendgroup=f"{model}-bundle",
+                line=dict(color=clr, width=2.5, dash="dashdot"),
+                hovertemplate=f"{model} bundled: %{{y:,.0f}}<extra></extra>",
+            ))
+        u = (unbundled_totals or {}).get(model)
+        if u is not None and len(u):
+            u = u.sort_index()
+            fig.add_trace(go.Scatter(
+                x=u.index, y=u.to_numpy(), mode="lines",
+                name=f"{model} · unbundled summed", legendgroup=f"{model}-sum",
+                line=dict(color=clr, width=2, dash="dot"), opacity=0.7,
+                hovertemplate=f"{model} unbundled sum: %{{y:,.0f}}<extra></extra>",
+            ))
+
+    fig.update_layout(
+        title=dict(text=title or "Bundle total", x=0.5, xanchor="center"),
+        template="plotly_white", hovermode="x unified",
+        xaxis_title="ReportingMonth", yaxis_title="Consumption (bundle total)",
+        legend=dict(yanchor="top", y=1.0, x=1.02),
+        height=420, margin=dict(t=70, r=240, l=70, b=60),
+    )
+    return fig

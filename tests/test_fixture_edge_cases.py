@@ -1,19 +1,17 @@
 """
-Tests for plan 01f — fixture edge-case entities.
+Tests for plan 01f / plan 12 — fixture edge-case entities.
 
-Three layers:
-  1. Unit tests: builder functions in unbundled-modelling/scripts/build_fixture.py
+Four layers:
+  1. Unit tests: the edge-case builder functions in tests/fixtures/edge_cases.py
   2. Fixture content tests: assertions on the built parquet (skip if not built yet)
-  3. Integration tests: forecast_for_podel_id logs the right error for each bad scenario;
+  3. Integration tests: forecast_for_pod_id logs the right error for each bad scenario;
      forecast_arima_unbundled loop routes every edge-case entity
+  4. Untested-case tests (plan 12): negative months, duplicate rows, horizon > history,
+     exercised over the shared three-member fixture (tests/fixtures/edge_cases.py)
 
 Run from the project root:
     pytest tests/test_fixture_edge_cases.py -v
-Build the fixture first (for Part 2):
-    python unbundled-modelling/scripts/build_fixture.py
 """
-import importlib.util
-import os
 import sys
 import types
 from pathlib import Path
@@ -27,24 +25,20 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from db.queries import ForecastConfig
-from evaluation.performance import EntityPerformanceData, UnbundledResults
+from evaluation.performance import EntityPerformanceData, ForecastResults
 from validation.series import validate_series as _real_validate_series
 
-# ── load build_fixture.py (directory name has a hyphen, can't be imported normally) ──
-# unbundled-modelling/ is local-only planning scratch (gitignored): on a machine
-# without it (cluster, CI, fresh clone) skip this module rather than error out.
-_BF_PATH = PROJECT_ROOT / "unbundled-modelling" / "scripts" / "build_fixture.py"
-if not _BF_PATH.exists():
-    pytest.skip("unbundled-modelling scratch (edge-case builders) not present",
-                allow_module_level=True)
-_spec = importlib.util.spec_from_file_location("build_fixture", _BF_PATH)
-_bf = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_bf)
-
-build_short_series_rows   = _bf.build_short_series_rows
-build_gapped_series_rows  = _bf.build_gapped_series_rows
-build_all_zero_rows       = _bf.build_all_zero_rows
-build_outlier_spike_rows  = _bf.build_outlier_spike_rows
+# The edge-case builders live in the repo now (tests/fixtures/edge_cases.py),
+# rekeyed on PodID. They used to sit in unbundled-modelling/scripts/build_fixture.py,
+# a gitignored scratch dir that was never present, so this module skipped itself
+# on every machine. That skip — and the hyphenated-directory import shim — is gone.
+from tests.fixtures.edge_cases import (
+    build_short_series_rows,
+    build_gapped_series_rows,
+    build_all_zero_rows,
+    build_outlier_spike_rows,
+    build_edge_fixture,
+)
 
 FIXTURE_PATH      = PROJECT_ROOT / "data" / "fixtures" / "unbundled_predictive_input.parquet"
 FIXTURE_AVAILABLE = FIXTURE_PATH.exists()
@@ -75,7 +69,7 @@ def _model_stub():
 
 
 def _pod_frame(entity_id: str, dates: pd.DatetimeIndex, peak: list) -> pd.DataFrame:
-    """DataFrame matching forecast_for_podel_id's expected format (PodID column, date index)."""
+    """DataFrame matching forecast_for_pod_id's expected format (PodID column, date index)."""
     return pd.DataFrame({"PodID": entity_id, "PeakConsumption": peak}, index=dates)
 
 
@@ -246,14 +240,14 @@ class TestFixtureContent:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Part 3 — Error-logging unit tests via forecast_for_podel_id
+# Part 3 — Error-logging unit tests via forecast_for_pod_id
 #
-# These tests call forecast_for_podel_id directly with edge-case DataFrames
+# These tests call forecast_for_pod_id directly with edge-case DataFrames
 # that have a PodID column (the format the function expects), patch
 # report_validation_error, and assert the right error_type is logged.
 # ══════════════════════════════════════════════════════════════════════════════
 
-from models.algorithms.autoarima import forecast_for_podel_id
+from models.algorithms.autoarima import forecast_for_pod_id
 
 
 class TestShortSeriesLogsError:
@@ -266,7 +260,7 @@ class TestShortSeriesLogsError:
         df = _pod_frame("POD_SHORT_SERIES", dates, peak)
         mock_log = MagicMock()
         with patch("models.algorithms.autoarima.report_validation_error", mock_log):
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df,
                 order=(1, 1, 1),
                 customer_id="SYNTH_EDGE_001",
@@ -289,7 +283,7 @@ class TestShortSeriesLogsError:
              patch("models.algorithms.autoarima.fit_time_series_model") as mock_fit:
             dates = pd.date_range("2024-07-01", periods=6, freq="MS")
             df = _pod_frame("POD_SHORT_SERIES", dates, [190.0 + i * 10 for i in range(6)])
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df, order=(1, 1, 1), customer_id="SYNTH_EDGE_001",
                 pod_id="POD_SHORT_SERIES", consumption_types=["PeakConsumption"],
                 ufm_config=_ufm_config(), forecast_model=_model_stub(),
@@ -305,7 +299,7 @@ class TestAllZeroLogsError:
         df = _pod_frame("COMBO_ZERO_CONSUMPTION", dates, [0.0] * 24)
         mock_log = MagicMock()
         with patch("models.algorithms.autoarima.report_validation_error", mock_log):
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df,
                 order=(1, 1, 1),
                 customer_id="SYNTH_EDGE_003",
@@ -328,7 +322,7 @@ class TestAllZeroLogsError:
              patch("models.algorithms.autoarima.fit_time_series_model") as mock_fit:
             dates = pd.date_range("2022-01-01", periods=24, freq="MS")
             df = _pod_frame("COMBO_ZERO_CONSUMPTION", dates, [0.0] * 24)
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df, order=(1, 1, 1), customer_id="SYNTH_EDGE_003",
                 pod_id="COMBO_ZERO_CONSUMPTION", consumption_types=["PeakConsumption"],
                 ufm_config=_ufm_config(), forecast_model=_model_stub(),
@@ -348,7 +342,7 @@ class TestGappedSeriesLogsError:
         df = _pod_frame("POD_GAPPED_SERIES", dates, peak)
         mock_log = MagicMock()
         with patch("models.algorithms.autoarima.report_validation_error", mock_log):
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df,
                 order=(1, 1, 1),
                 customer_id="SYNTH_EDGE_002",
@@ -373,7 +367,7 @@ class TestGappedSeriesLogsError:
             gap = pd.date_range("2022-10-01", "2023-01-01", freq="MS")
             dates = full[~full.isin(gap)]
             df = _pod_frame("POD_GAPPED_SERIES", dates, [200.0 + i * 5 for i in range(len(dates))])
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df, order=(1, 1, 1), customer_id="SYNTH_EDGE_002",
                 pod_id="POD_GAPPED_SERIES", consumption_types=["PeakConsumption"],
                 ufm_config=_ufm_config(), forecast_model=_model_stub(),
@@ -402,7 +396,7 @@ class TestOutlierSpikeNoPreflightError:
         mock_log = MagicMock()
         with patch("models.algorithms.autoarima.report_validation_error", mock_log), \
              patch("models.algorithms.autoarima.fit_time_series_model", return_value=mock_fit_instance):
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df,
                 order=(1, 1, 1),
                 customer_id="SYNTH_EDGE_004",
@@ -433,7 +427,7 @@ class TestOutlierSpikeNoPreflightError:
         with patch("models.algorithms.autoarima.report_validation_error"), \
              patch("models.algorithms.autoarima.fit_time_series_model",
                    return_value=mock_fit_instance) as mock_fit:
-            forecast_for_podel_id(
+            forecast_for_pod_id(
                 df=df,
                 order=(1, 1, 1),
                 customer_id="SYNTH_EDGE_004",
@@ -467,22 +461,10 @@ _EDGE_ENTITY_IDS = {
 }
 
 
-def _build_edge_fixture() -> pd.DataFrame:
-    """In-memory fixture with all 4 edge-case entities (no file I/O)."""
-    df = pd.concat(
-        [build_short_series_rows(), build_gapped_series_rows(),
-         build_all_zero_rows(), build_outlier_spike_rows()],
-        ignore_index=True,
-    )
-    df["TariffID"]    = df["TariffID"].astype(str)
-    df["CustomerID"]  = df["CustomerID"].astype(str)
-    # The loop now groups by PodID; the entity-keyed builders predate that, so
-    # mirror EntityID until the builders are rewritten to the PodID contract.
-    df["PodID"] = df["EntityID"]
-    return df
-
-
-_EDGE_FIXTURE = _build_edge_fixture()
+# In-memory fixture with all 4 edge-case entities (no file I/O). The builders
+# now emit PodID natively, so the loop's groupby routes each entity without the
+# EntityID→PodID mirror the module used to apply here.
+_EDGE_FIXTURE = build_edge_fixture()
 
 
 def _entity_perf_stub(unit, *args, **kwargs) -> EntityPerformanceData:
@@ -521,9 +503,9 @@ def loop_run():
         constructed.append(unit)
         return _real_validate_series(unit, method)
 
-    with patch("models.algorithms._unbundled.get_unbundled_predictive_data", return_value=_EDGE_FIXTURE), \
+    with patch("models.algorithms.unbundled.get_unbundled_predictive_data", return_value=_EDGE_FIXTURE), \
          patch("models.algorithms.autoarima.forecast_for_entity", route_spy), \
-         patch("models.algorithms._unbundled.validate_series", side_effect=_validate_capture):
+         patch("models.algorithms.unbundled.validate_series", side_effect=_validate_capture):
         result = forecast_arima_unbundled(_model_stub(), spark=None)
     return result, route_spy, constructed
 
@@ -531,7 +513,7 @@ def loop_run():
 class TestLoopRoutesEdgeEntities:
     def test_returns_unbundled_results_type(self, loop_run):
         result, _, _ = loop_run
-        assert isinstance(result, UnbundledResults)
+        assert isinstance(result, ForecastResults)
 
     def test_all_edge_entities_validated(self, loop_run):
         # Every entity is constructed and validated, even the ones later skipped.
@@ -591,3 +573,144 @@ class TestLoopRoutesEdgeEntities:
         # every unit carries the neutral placeholder.
         _, _, constructed = loop_run
         assert {u.entity_type for u in constructed} == {""}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Part 5 — the cases the matrix showed untested on this path (plan 12)
+#
+# Negative months, duplicate rows, and horizon-longer-than-history each had a
+# documented behaviour on the unbundled path but no test pinning it. These run
+# the shared three-member fixture (tests/fixtures/edge_cases.py) so the case a
+# test asserts on is the same object the evidence script and plan 13 use.
+# ══════════════════════════════════════════════════════════════════════════════
+
+from evaluation.performance import PredictionUnit
+from models.algorithms.utilities import prepare_time_series_data
+from tests.fixtures.edge_cases import (
+    AFFECTED_MEMBER,
+    build_case_frame,
+    default_ufm_config,
+    long_horizon_ufm_config,
+)
+
+
+def _pod_indexed(frame: pd.DataFrame, pod_id: str) -> pd.DataFrame:
+    """One member's rows, date-indexed with a PodID column — the shape
+    forecast_for_pod_id expects (mirrors run_unbundled's per-group setup)."""
+    sub = frame[frame["PodID"] == pod_id].copy().set_index("ReportingMonth")
+    sub.index = pd.to_datetime(sub.index)
+    return sub.sort_index()
+
+
+def _unit_for(frame: pd.DataFrame, pod_id: str) -> PredictionUnit:
+    series = _pod_indexed(frame, pod_id)
+    return PredictionUnit(
+        entity_id=pod_id,
+        entity_type="",
+        tariff_type=series["TariffType"].iloc[0],
+        customer_id=str(series["CustomerID"].iloc[0]),
+        tariff_id=series["TariffID"].iloc[0],
+        series=series,
+    )
+
+
+class TestNegativeMonths:
+    """Credit months (negative values) are a warning, not a rejection: the
+    series still validates and is forecast."""
+
+    def test_negative_months_present_in_fixture(self):
+        frame = build_case_frame("negative_months")
+        peak = _pod_indexed(frame, AFFECTED_MEMBER)["PeakConsumption"]
+        assert (peak < 0).any(), "the credit case must actually carry negative months"
+
+    def test_validation_warns_but_passes(self):
+        unit = _unit_for(build_case_frame("negative_months"), AFFECTED_MEMBER)
+        ok, reason = _real_validate_series(unit, "ARIMA")
+        assert ok is True
+        assert reason.startswith("negative values")
+
+    def test_negative_member_reaches_the_fit(self):
+        """Warning-only means the member is not skipped — the fit is attempted."""
+        frame = build_case_frame("negative_months")
+        df = _pod_indexed(frame, AFFECTED_MEMBER)
+        horizon = pd.date_range("2025-01-01", periods=6, freq="MS")
+        mock_fit = MagicMock()
+        mock_fit.get_forecast.return_value.predicted_mean = pd.Series(
+            [300.0] * 6, index=horizon)
+        mock_fit.predict.return_value = pd.Series([300.0] * len(df), index=df.index)
+        with patch("models.algorithms.autoarima.report_validation_error") as mock_log, \
+             patch("models.algorithms.autoarima.fit_time_series_model",
+                   return_value=mock_fit) as fit:
+            forecast_for_pod_id(
+                df=df, order=(1, 1, 1), customer_id="CUST_A", pod_id=AFFECTED_MEMBER,
+                consumption_types=["PeakConsumption"],
+                ufm_config=default_ufm_config(), forecast_model=_model_stub(),
+            )
+        assert fit.called
+        assert "InvalidSeries" not in _logged_error_types(mock_log)
+        assert "SplitConfigurationError" not in _logged_error_types(mock_log)
+
+
+class TestDuplicateMonth:
+    """Two rows for one member-month: the path keeps the first and drops the
+    duplicate (prepare_time_series_data's default 'drop' strategy). It is neither
+    summed nor an error."""
+
+    def test_duplicate_present_in_fixture(self):
+        frame = build_case_frame("duplicate_month")
+        raw = frame[frame["PodID"] == AFFECTED_MEMBER]["ReportingMonth"]
+        assert raw.duplicated().any(), "the duplicate case must carry a repeated month"
+
+    def test_first_row_wins_not_summed(self):
+        frame = build_case_frame("duplicate_month")
+        df = _pod_indexed(frame, AFFECTED_MEMBER)
+        dup_month = pd.Timestamp("2024-03-01")
+        first_value = df.loc[dup_month, "PeakConsumption"].iloc[0]
+        series = prepare_time_series_data(df, "PeakConsumption")
+        # One value survives for the month, and it is the first row's value —
+        # not the sum of the two identical rows.
+        assert (series.index == dup_month).sum() == 1
+        assert series.loc[dup_month] == first_value
+
+    def test_deduped_series_has_unique_months(self):
+        df = _pod_indexed(build_case_frame("duplicate_month"), AFFECTED_MEMBER)
+        series = prepare_time_series_data(df, "PeakConsumption")
+        assert not series.index.duplicated().any()
+
+
+class TestHorizonLongerThanHistory:
+    """A 36-month horizon over a 24-month history: the path runs (no pre-flight
+    rejection) and produces a forecast the full length of the horizon."""
+
+    def test_config_horizon_exceeds_history(self):
+        cfg = long_horizon_ufm_config()
+        horizon = pd.date_range(cfg.start_date, cfg.end_date, freq="MS")
+        history = _pod_indexed(build_case_frame("horizon_longer_than_history"),
+                               AFFECTED_MEMBER)
+        assert len(horizon) == 36
+        assert len(horizon) > len(history)
+
+    def test_runs_and_forecasts_full_horizon(self):
+        frame = build_case_frame("horizon_longer_than_history")
+        df = _pod_indexed(frame, AFFECTED_MEMBER)
+        cfg = long_horizon_ufm_config()
+        horizon = pd.date_range(cfg.start_date, cfg.end_date, freq="MS")  # 36 months
+        mock_fit = MagicMock()
+        mock_fit.get_forecast.return_value.predicted_mean = pd.Series(
+            np.linspace(300.0, 340.0, 36), index=horizon)
+        mock_fit.predict.return_value = pd.Series([300.0] * len(df), index=df.index)
+        with patch("models.algorithms.autoarima.report_validation_error") as mock_log, \
+             patch("models.algorithms.autoarima.fit_time_series_model",
+                   return_value=mock_fit):
+            perf = forecast_for_pod_id(
+                df=df, order=(1, 1, 1), customer_id="CUST_A", pod_id=AFFECTED_MEMBER,
+                consumption_types=["PeakConsumption"],
+                ufm_config=cfg, forecast_model=_model_stub(),
+            )
+        logged = _logged_error_types(mock_log)
+        assert "SplitConfigurationError" not in logged
+        assert "ForecastGapTooLarge" not in logged
+        # get_forecast asked for the full 36-month horizon, not the 24 of history.
+        steps = mock_fit.get_forecast.call_args.kwargs.get("steps")
+        assert steps == 36
+        assert not perf.performance_data_frame.empty

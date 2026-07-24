@@ -101,7 +101,8 @@ def resolve_task_id(dbutils, default="2"):
 
     Declares the widget (with a default) before reading it, so it renders on an
     interactive cluster run too — a job that passes the parameter still overrides
-    the value. Mirrors resolve_unbundled's declare-then-get pattern.
+    the value. This is now the notebooks' only widget — the mode comes from the UFM's
+    BundledInd, not from an operator (plan 11).
     """
     if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
         return int(os.environ.get("DATABRICK_TASK_ID", default))
@@ -117,118 +118,88 @@ def _truthy(value):
     return str(value).strip().lower() in ("1", "true", "yes", "y")
 
 
-def resolve_unbundled(dbutils, default=False):
-    """Mode flag — True → unbundled (entity-keyed LPU/SPU/PPU), False → bundled (customer/pod).
+def run_forecast(dataset, spark, config, forecasters):
+    """Route the loaded dataset to the unbundled or bundled forecaster.
 
-    Local: the ``UNBUNDLED`` env var (default ``false``). Cluster: the ``Unbundled``
-    widget (created here if absent, default ``false``). Mirrors :func:`resolve_task_id`
-    — the flag only selects the iteration path; the model and its parameters still
-    come from the UFM config. Bundled is the default so existing jobs are unchanged;
-    unbundled is opt-in.
+    The mode is a property of the UFM, not of the run: ``BundledInd = 1`` forecasts the
+    UFM's entities as one aggregate disaggregated to members, ``0`` or ``NULL`` forecasts
+    each separately. There is no widget, env var or flag to override it, so a run can never
+    contradict the configuration it was launched for.
+
+    ``forecasters`` is ``{"unbundled": fn, "bundled": fn}``; both take ``(model, spark)``
+    and return a ``ForecastResults``. The model and its parameters also come from
+    ``dataset.ufm_config``. Neither path writes to the database.
+
+    Validation warnings are collected for the whole run and emitted once at the end,
+    grouped by type with the pods affected — a run over many pods otherwise repeats the
+    same warning per pod·channel.
     """
-    if not os.environ.get("DATABRICKS_RUNTIME_VERSION"):
-        raw = os.environ.get("UNBUNDLED", str(default))
-    else:
-        default_str = "true" if default else "false"
-        try:
-            dbutils.widgets.dropdown(
-                "Unbundled", default_str, ["true", "false"],
-                "Unbundled (entity-keyed) mode?")
-            raw = dbutils.widgets.get("Unbundled")
-        except Exception:
-            # Widget machinery unavailable / undefined → fall back to the default.
-            raw = default_str
-    unbundled = _truthy(raw)
-    logger.info(f"🔀 Mode flag resolved: {'unbundled' if unbundled else 'bundled'}.")
-    return unbundled
+    from db.error_logger import collect_validation_errors
+    from models.base import ForecastModel
+    ufm = dataset.ufm_config
+    mode = "bundled" if ufm.bundled else "unbundled"
+    # print, not logger.info: the notebooks set logging to WARNING, and since the mode is no
+    # longer visible in the invocation, the resolved decision *and its reason* must always
+    # reach the operator. Mirrors the offline gate's line so both paths read identically.
+    print(f"🔀 {mode.upper()} (UFM {ufm.user_forecast_method_id}, "
+          f"BundledInd={ufm.bundled}).")
+    label = f"{mode} {ufm.forecast_method_name} (UFM {ufm.user_forecast_method_id})"
+    with collect_validation_errors(label):
+        return forecasters[mode](ForecastModel(dataset, config), spark)
 
 
-def run_forecast(dataset, spark, config, forecast_unbundled_fn, unbundled):
-    """Dispatch a loaded ``ForecastDataset`` to the unbundled or bundled forecaster.
+def bootstrap_run(method_id, method_name, forecasters, config):
+    """Resolve the whole run environment in one call → ``(spark, dataset)``.
 
-    Both read the model and parameters from ``dataset.ufm_config``; ``unbundled``
-    only chooses entity-keyed iteration vs the customer/pod pipeline. Returns the
-    forecaster's result.
-    """
-    if unbundled:
-        from models.base import ForecastModel
-        logger.info("🔀 Running UNBUNDLED (entity-keyed) forecast.")
-        return forecast_unbundled_fn(ForecastModel(dataset, config), spark)
-    from programs.pipeline import ForecastPipeline
-    logger.info("🔀 Running BUNDLED (customer/pod) forecast.")
-    return ForecastPipeline(dataset=dataset, config=config).run(spark)
+    Order is load-bearing: the offline-fixture gate runs first and exits before any
+    Spark/cluster/DB is touched; only then attach Spark, guard the workspace, read the
+    task-id widget, and resolve the dataset. No up-front ``load_data()`` — both modes fetch
+    their own PodID data downstream. ``forecasters`` is the ``{"unbundled", "bundled"}``
+    routing table (see :func:`run_forecast`).
 
-
-def bootstrap_run(method_id, method_name, forecast_unbundled_fn, config):
-    """Resolve the whole run environment in one call → ``(spark, dataset, unbundled)``.
-
-    Collapses the notebook's setup boilerplate. Order is load-bearing:
-
-    1. :func:`maybe_run_offline` — if this is an offline fixture run, forecast
-       locally and ``sys.exit(0)`` before any Spark/cluster/DB is touched.
-    2. :func:`resolve_env` (ENV → which DB, from the cluster's own env var) +
-       :func:`init_spark` + ``set_dbutils`` + :func:`assert_local_workspace` — attach
-       to the cluster (DEV via databricks-connect locally, the job's SparkSession on
-       Databricks) and refuse the wrong workspace locally.
-    3. :func:`resolve_task_id` + :func:`resolve_unbundled` — read the DatabrickTaskID
-       and Unbundled widgets (env vars locally).
-    4. ``ForecastDataset(task_id, spark)`` — resolves the UFM config from the DB;
-       ``load_data()`` runs only on the bundled path (the unbundled path fetches
-       its own PodID data downstream).
-    5. :func:`save_fixture` (guarded bundled dump) + ``define_forecast_range()``
-       (sets ``dataset.forecast_dates``).
-
-    Returns what :func:`run_forecast` / :func:`render_unbundled` need; inspect
-    ``dataset.ufm_config`` in the next cell to see what the run resolved to.
+    The task id is the only input. The mode arrives with the dataset, on
+    ``dataset.ufm_config.bundled``.
     """
     from data.dataset import ForecastDataset
     from utils.dbutils_singleton import set_dbutils
+    from utils.quiet_warnings import quiet_third_party_warnings
 
+    quiet_third_party_warnings()
     resolve_env()
-    maybe_run_offline(method_id, method_name, forecast_unbundled_fn, config)
+    run_offline_fixture(method_id, method_name, forecasters, config)
     spark, dbutils = init_spark()
     set_dbutils(dbutils)
     assert_local_workspace(spark)
     task_id = resolve_task_id(dbutils)
-    unbundled = resolve_unbundled(dbutils)
     dataset = ForecastDataset(task_id, spark)
-    if not unbundled:
-        dataset.load_data()
     save_fixture(dataset)
     dataset.define_forecast_range()
-    return spark, dataset, unbundled
+    return spark, dataset
 
 
-def render_unbundled(result, unbundled=True):
-    """Display-only terminal step for the unbundled path.
-
-    Renders the unbundled forecast output inline in the notebook cell (a summary
-    line plus a forecast/metrics table) and performs **no** DB writes — the
-    unbundled Ermelo path is a cells-only display demo. No-op for the bundled
-    path, which persists to ForecastFact / StatisticalPerformanceMetrics instead.
-    Returns the previewed DataFrame, or None when skipped.
+def render_forecast(result):
+    """Render a forecast result inline (summary + forecast/metrics table + ForecastFact
+    preview). Mode-agnostic — both paths return the same ``ForecastResults``. Display only:
+    NO DB writes on either path. Returns the previewed DataFrame, or None when empty.
     """
-    if not unbundled:
-        return None
     perf = result.get_performance_data()
     if perf is None or perf.empty:
-        print("⚠️ Unbundled run produced no forecast rows (nothing to display).")
+        print("⚠️ Run produced no forecast rows (nothing to display).")
         return perf
-    n_pods = perf["PodID"].nunique() if "PodID" in perf.columns else "?"
-    print(f"📊 Unbundled forecast — {len(perf)} row(s) across {n_pods} "
-          f"pod{'' if n_pods == 1 else 's'}; display-only, no DB writes.")
-    cols = [c for c in ("PodID", "TariffType", "ReportingMonth",
-                        "forecast", "RMSE", "MAE", "R2") if c in perf.columns]
+    n_pods = "?"
+    if "PodID" in perf.columns:
+        n_pods = perf["PodID"].nunique()
+    pod_word = "pod" if n_pods == 1 else "pods"
+    print(f"📊 Forecast — {len(perf)} row(s) across {n_pods} {pod_word}; "
+          f"display-only, no DB writes.")
+    wanted_cols = ("PodID", "TariffType", "ReportingMonth", "forecast", "RMSE", "MAE", "R2")
+    cols = [c for c in wanted_cols if c in perf.columns]
     preview = perf[cols] if cols else perf
     try:
         from IPython.display import display
         display(preview)
     except Exception:
         print(preview.to_string(index=False))
-
-    # ForecastFact-shaped preview — the wide write-shape the bundled writer would
-    # persist (one row per ReportingMonth, a column per consumption type), molded from
-    # the same builder. Display only — the unbundled path performs NO DB writes.
     try:
         ff = result.to_forecast_fact()
         if ff is not None and not ff.empty:
@@ -262,52 +233,65 @@ def save_fixture(dataset):
     sys.exit(0)
 
 
-def maybe_run_offline(method_id, method_name, forecast_unbundled_fn, config):
-    """Local-only offline gate — no-op on Databricks and on any live run.
+def _offline_model(ufm_config, log):
+    """A ``ForecastModel`` stand-in for offline fixture runs.
 
-    If ``--mode unbundled`` and ``PREDICTIVE_FIXTURE_PATH`` are both set (the offline
-    fixture launch configs), forecast against that local CSV/parquet, render the
-    ForecastFact preview, and exit before any Spark/cluster/DB is touched. Otherwise
-    return immediately so the real flow (Databricks job or live-DEV fetch) proceeds.
-    This is the single place the notebook diverts to a local fixture run; on the
-    cluster no CLI args are present, so it always falls through.
+    Both forecasters read only ``model.dataset.ufm_config`` and ``model.config.log``; a
+    real ``ForecastModel`` needs a ``ForecastDataset``, which needs a live Spark session,
+    so offline we hand them this lightweight double instead (the same SimpleNamespace
+    idiom the tests and ``forecasting/engine.py`` use).
     """
-    import argparse
-    import sys
     import types
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--mode", default="bundled", choices=["bundled", "unbundled"])
-    run_args, _ = parser.parse_known_args()
-    if not (run_args.mode == "unbundled" and os.environ.get("PREDICTIVE_FIXTURE_PATH")):
+    return types.SimpleNamespace(
+        dataset=types.SimpleNamespace(ufm_config=ufm_config),
+        config=types.SimpleNamespace(log=log),
+    )
+
+
+def run_offline_fixture(method_id, method_name, forecasters, config):
+    """Local-only offline gate — no-op unless ``PREDICTIVE_FIXTURE_PATH`` is set.
+
+    When set (the offline launch configs), forecast the local fixture, render the preview,
+    and ``sys.exit(0)`` before any Spark is touched. On a cluster the variable is unset, so
+    it falls through to the live flow.
+
+    The mode comes from the fixture's own ``BundledInd`` column, mirroring how a live run
+    reads it off the UFM row. Fixtures predating bundled modelling have no such column,
+    which reads as NULL and runs unbundled — the same rule the database follows.
+    """
+    import sys
+    if not os.environ.get("PREDICTIVE_FIXTURE_PATH"):
         return
     import pandas as pd
     from db.queries import ForecastConfig
     fixture_path = os.environ["PREDICTIVE_FIXTURE_PATH"]
     if fixture_path.endswith(".csv"):
-        # utf-8-sig strips the BOM Results.csv carries on its header.
         fixture_df = pd.read_csv(fixture_path, encoding="utf-8-sig")
     else:
         fixture_df = pd.read_parquet(fixture_path)
-    # CSV loads ReportingMonth as strings; the horizon arithmetic needs datetimes.
     max_date = pd.to_datetime(fixture_df["ReportingMonth"]).max()
     start = max_date + pd.DateOffset(months=1)
     end = start + pd.DateOffset(months=11)
-    # The preview stamps UserForecastMethodID from this config (the one UFMID
-    # source); align the stub with the fixture's own UFMID so preview rows carry
-    # the real value (421 for Results.csv) instead of a made-up 0.
-    ufmid = (int(fixture_df["UserForecastMethodID"].iloc[0])
-             if "UserForecastMethodID" in fixture_df.columns and len(fixture_df) else 0)
+    ufmid = 0
+    if "UserForecastMethodID" in fixture_df.columns and len(fixture_df):
+        ufmid = int(fixture_df["UserForecastMethodID"].iloc[0])
+    bundled = False
+    if "BundledInd" in fixture_df.columns and len(fixture_df):
+        bundled_value = fixture_df["BundledInd"].iloc[0]
+        if pd.notna(bundled_value):
+            bundled = bool(bundled_value)
     ufm_config = ForecastConfig(
         forecast_method_id=method_id,
         forecast_method_name=method_name,
         model_parameters=config.get("model_parameters", ""),
         region="LOCAL", status="Active", user_forecast_method_id=ufmid,
-        start_date=start, end_date=end, databrick_task_id=0,
+        start_date=start, end_date=end, databrick_task_id=0, bundled=bundled,
     )
-    model_stub = types.SimpleNamespace(
-        dataset=types.SimpleNamespace(ufm_config=ufm_config),
-        config=types.SimpleNamespace(log=config.get("log", False)),
-    )
-    result = forecast_unbundled_fn(model_stub, spark=None)
-    render_unbundled(result, unbundled=True)
+    mode = "bundled" if bundled else "unbundled"
+    print(f"🔀 {mode.upper()} (UFM {ufmid}, BundledInd={bundled}).")
+    model = _offline_model(ufm_config, log=config.get("log", False))
+    from db.error_logger import collect_validation_errors
+    with collect_validation_errors(f"{mode} {method_name} (UFM {ufmid}, offline fixture)"):
+        result = forecasters[mode](model, spark=None)
+    render_forecast(result)
     sys.exit(0)

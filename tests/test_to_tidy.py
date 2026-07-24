@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from evaluation.performance import EntityPerformanceData, UnbundledResults
+from evaluation.performance import EntityPerformanceData, ForecastResults
 from results_analysis.tidy import (
     REQUIRED_COLUMNS,
     TIDY_COLUMNS,
@@ -66,8 +66,8 @@ def _entity(entity_id="E001", tariff="LPU", etype="POD", method="ARIMA",
     )
 
 
-def _results(method="ARIMA", entities=None) -> UnbundledResults:
-    res = UnbundledResults(forecast_method_name=method)
+def _results(method="ARIMA", entities=None) -> ForecastResults:
+    res = ForecastResults(forecast_method_name=method)
     res.entity_performance = entities if entities is not None else [_entity(method=method)]
     return res
 

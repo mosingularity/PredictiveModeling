@@ -1,6 +1,5 @@
 python library/
 databricks_support/
-bundle-forecasting/
 # Local environment overrides — never commit
 .env
 .env.*
@@ -11,7 +10,6 @@ demos/
 # VS Code workspace state — local dev only (the code runs directly / on Databricks)
 .vscode/*.log
 .vscode/settings.json
-.vscode/launch.json
 
 # Python caches
 __pycache__/
@@ -37,8 +35,6 @@ ci-cd-ado/
 # Databricks runs against the real DB; these CSVs are local-dev/QA artifacts only.
 data/fixtures/Results*.csv
 data/unbundled_real_ermelo/
-data/unbundled_synthetic_clean/
-data/fixtures/unbundled_synthetic_clean.csv
 
 # Coverage output
 .coverage
@@ -46,3 +42,14 @@ data/fixtures/unbundled_synthetic_clean.csv
 # Playwright MCP session artifacts (screenshots, snapshots)
 .playwright-mcp/
 podid-dashboard-*.png
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+
+# Disposable evidence code (demonstrate skill) — figures live in docs/evidence/
+/evidence/
+
+# Evidence records and the bundle-forecasting plan scope (plans, MASTER_PLAN,
+# scratch figures) — working/planning material, not shipped code. Kept locally
+# as reference, never committed.
+/docs/
+/bundle-forecasting/

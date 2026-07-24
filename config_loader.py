@@ -16,5 +16,5 @@ def load_config(path: str = 'config.yaml') -> HyperParameterConfig:
         data = yaml.safe_load(f)
     # Filter out keys used for the forecasting pipeline (ignore environment definitions)
     config_keys = ["consumption_types", "log", "tables"]
-    filtered_data = { key: data[key] for key in config_keys if key in data }
+    filtered_data = {key: data[key] for key in config_keys if key in data}
     return HyperParameterConfig(**filtered_data)
