@@ -1,5 +1,3 @@
-# hyperparameters.py
-
 import logging
 from typing import Any
 from db.utilities import load_yaml_config

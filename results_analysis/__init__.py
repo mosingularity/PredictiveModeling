@@ -2,7 +2,7 @@
 
 The layer never fits a model: it reads the tidy forecast contract only. The
 single coupling point to the generate side (the four ESF-* runners) is
-:mod:`results_analysis.tidy`, which adapts an ``UnbundledResults`` into the one
+:mod:`results_analysis.tidy`, which adapts an ``ForecastResults`` into the one
 tidy long-format table the dashboard figures read
 (:mod:`results_analysis.figures.dashboard`).
 """

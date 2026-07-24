@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db.queries import ForecastConfig
-from evaluation.performance import EntityPerformanceData, UnbundledResults
+from evaluation.performance import EntityPerformanceData, ForecastResults
 
 # ── fixture data ──────────────────────────────────────────────────────────────
 
@@ -103,10 +103,10 @@ def test_arima_loop_groups_correctly():
         "models.algorithms.autoarima",
         "forecast_arima_unbundled",
         "ARIMA",
-        "models.algorithms._unbundled.get_unbundled_predictive_data",
+        "models.algorithms.unbundled.get_unbundled_predictive_data",
         "models.algorithms.autoarima.forecast_for_entity",
     )
-    assert isinstance(result, UnbundledResults)
+    assert isinstance(result, ForecastResults)
     assert spy.call_count == N_GROUPS
     assert len(result.entity_performance) == N_GROUPS
 
@@ -116,10 +116,10 @@ def test_xgb_loop_groups_correctly():
         "models.algorithms.tree_algorithms.xgb",
         "forecast_xgb_unbundled",
         "XGBoost",
-        "models.algorithms._unbundled.get_unbundled_predictive_data",
+        "models.algorithms.unbundled.get_unbundled_predictive_data",
         "models.algorithms.tree_algorithms.xgb.forecast_for_entity",
     )
-    assert isinstance(result, UnbundledResults)
+    assert isinstance(result, ForecastResults)
     assert spy.call_count == N_GROUPS
     assert len(result.entity_performance) == N_GROUPS
 
@@ -129,10 +129,10 @@ def test_rf_loop_groups_correctly():
         "models.algorithms.tree_algorithms.rf",
         "forecast_rf_unbundled",
         "RandomForest",
-        "models.algorithms._unbundled.get_unbundled_predictive_data",
+        "models.algorithms.unbundled.get_unbundled_predictive_data",
         "models.algorithms.tree_algorithms.rf.forecast_for_entity",
     )
-    assert isinstance(result, UnbundledResults)
+    assert isinstance(result, ForecastResults)
     assert spy.call_count == N_GROUPS
     assert len(result.entity_performance) == N_GROUPS
 
@@ -150,7 +150,7 @@ def test_loop_entity_ids_correct():
         "models.algorithms.autoarima",
         "forecast_arima_unbundled",
         "ARIMA",
-        "models.algorithms._unbundled.get_unbundled_predictive_data",
+        "models.algorithms.unbundled.get_unbundled_predictive_data",
         "models.algorithms.autoarima.forecast_for_entity",
     )
     units = _extract_unit_kwargs(spy)
@@ -165,7 +165,7 @@ def test_one_entity_failure_does_not_abort_unbundled_run(caplog):
     and the failed pod produces no output rows."""
     import logging
 
-    from models.algorithms._unbundled import run_unbundled
+    from models.algorithms.unbundled import run_unbundled
 
     model = _make_model_stub("ARIMA")
 
@@ -174,7 +174,7 @@ def test_one_entity_failure_does_not_abort_unbundled_run(caplog):
             raise RuntimeError("convergence boom")
         return _entity_perf_stub(unit)
 
-    with patch("models.algorithms._unbundled.get_unbundled_predictive_data", return_value=MOCK_DATA), \
+    with patch("models.algorithms.unbundled.get_unbundled_predictive_data", return_value=MOCK_DATA), \
          caplog.at_level(logging.INFO, logger="validation.run_summary"):
         result = run_unbundled(model, spark=None, forecast_for_entity=flaky)
 

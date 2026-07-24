@@ -1,32 +1,14 @@
-# base.py
 from config_loader import HyperParameterConfig
 from data.dataset import ForecastDataset
 
 
 class ForecastModel:
-    def __init__(self, dataset: ForecastDataset, config: HyperParameterConfig):
+    """Carries a run's dataset and config. The forecasting paths (run_bundled,
+    run_unbundled) take this and fetch their own entity data; they don't read
+    ``dataset.processed_df``, so it's only validated when present, not required."""
 
+    def __init__(self, dataset: ForecastDataset, config: HyperParameterConfig):
         self.dataset = dataset
         self.config = config
-        # Bundled runs require a loaded/preprocessed frame; the unbundled path does
-        # NOT load processed_df (it fetches its own entity-keyed data and only needs
-        # ufm_config), so only validate when a frame is present. run_bundled re-checks
-        # None/empty itself before using it.
         if self.dataset.processed_df is not None and self.dataset.processed_df.empty:
             raise ValueError("Dataset must be loaded and preprocessed before initializing the model.")
-
-    def prepare_data(self):
-        # Optional shared data preparation logic (e.g., filtering customer-specific data)
-        # This probably where we will perform fine-tuning
-        pass
-
-    def train(self, spark):
-        raise NotImplementedError("Subclasses must implement the train() method.")
-
-    # Do we need a fine_tune(self): and other methods that leverage Data Science & Machine Learning Principles
-
-    def evaluate(self):
-        raise NotImplementedError("Subclasses must implement the evaluate() method.")
-
-    def predict(self):
-        raise NotImplementedError("Subclasses must implement the predict() method.")
