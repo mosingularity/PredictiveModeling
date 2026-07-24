@@ -8,8 +8,7 @@ databricks_support/
 illuminate-output/
 demos/
 # VS Code workspace state — local dev only (the code runs directly / on Databricks)
-.vscode/*.log
-.vscode/settings.json
+.vscode/
 
 # Python caches
 __pycache__/
