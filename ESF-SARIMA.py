@@ -13,7 +13,6 @@ from config_loader import load_config
 sys.path.append("/Workspace/Shared")
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.WARNING)
-logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 import os
 from notebook_bootstrap import bootstrap_run, run_forecast, render_forecast
 
