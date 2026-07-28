@@ -25,7 +25,7 @@ class DatabricksNotebookHandler(logging.Handler):
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-logging.getLogger("py4j.clientserver").setLevel(logging.INFO)
+logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
 
 if not logger.hasHandlers():
     notebook_handler = DatabricksNotebookHandler()
