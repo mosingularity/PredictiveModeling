@@ -1,49 +1,57 @@
-# utilities_spark.py
+"""Configuration and Spark JDBC helpers."""
 
-import os
-import yaml
 import logging
-from typing import Tuple, Dict
-from pyspark.sql import SparkSession, DataFrame
+import os
+from typing import Dict, Tuple
 
-logger = logging.getLogger(__name__)
+import yaml
+from pyspark.sql import DataFrame, SparkSession
+
 logging.basicConfig(level=logging.INFO)
 
 
 def load_yaml_config(config_path: str = "config.yaml") -> Dict:
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+    with open(config_path) as config_file:
+        return yaml.safe_load(config_file)
 
 
 def get_environment_config(config_path: str = "config.yaml") -> Tuple[str, Dict]:
-    env = os.getenv("ENV", "QA")
+    environment = os.getenv("ENV", "QA")
     config = load_yaml_config(config_path)
-    if env not in config:
-        raise ValueError(f"Environment '{env}' not found in {config_path}. Available: {list(config)}")
-    return env, config[env]
+    if environment not in config:
+        raise ValueError(
+            f"Environment '{environment}' not found in {config_path}. "
+            f"Available: {list(config)}"
+        )
+    return environment, config[environment]
 
 
-def get_jdbc_options(config_path: str = "config.yaml") -> Tuple[str, Dict[str, str]]:
-    _, env_cfg = get_environment_config(config_path)
+def get_jdbc_options(config_path: str = "config.yaml") -> Tuple[str, str, str]:
+    _, environment_config = get_environment_config(config_path)
     user = os.getenv("DB_USER", "fortrackSQL")
     password = os.getenv("DB_PASSWORD", "")
-    url = f"{env_cfg['server']};databaseName={env_cfg['database']}"
+    url = (
+        f"{environment_config['server']}:1433;"
+        f"database={environment_config['database']};"
+        "Authentication=ActiveDirectoryMSI"
+    )
     return url, user, password
 
 
-def read_sql_query(query: str, spark: SparkSession, config_path: str = "config.yaml") -> DataFrame:
-    jdbc_url, user, password = get_jdbc_options(config_path)
+def read_sql_query(
+    query: str, spark: SparkSession, config_path: str = "config.yaml"
+) -> DataFrame:
+    jdbc_url, _, _ = get_jdbc_options(config_path)
 
     try:
         df = (
             spark.read.format("jdbc")
-            # .option("url", jdbc_url)
-            .option("url", "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net:1433;database=FortrackDB;Authentication=ActiveDirectoryMSI")
+            .option("url", jdbc_url)
             .option("query", query)
             .load()
         )
         logging.info("✅ Query executed using Spark JDBC.")
         return df
-    except Exception as e:
-        logging.error(f"❌ Query failed: {e}")
+    except Exception as exc:
+        logging.error(f"❌ Query failed: {exc}")
         raise

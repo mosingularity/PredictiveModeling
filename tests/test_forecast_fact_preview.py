@@ -1,0 +1,120 @@
+"""
+Tests for the unbundled ForecastFact-shaped preview
+(``ForecastResults.to_forecast_fact``) and the unbundled **no-write** contract.
+
+All in-memory: successful formatting, missing/invalid fields, and the no-write
+contract are exercised with synthetic ``EntityPerformanceData`` — there is no live
+database, and after the legacy bundled writer was retired there is no DB-write
+boundary left to reach at all.
+
+Run from the project root:
+    pytest tests/test_forecast_fact_preview.py -v
+"""
+import os
+import sys
+import types
+from unittest.mock import patch
+
+import pandas as pd
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from evaluation.performance import EntityPerformanceData, ForecastResults
+
+DATES = pd.to_datetime(["2026-04-01", "2026-05-01", "2026-06-01"])
+
+
+def _entity(entity_id, entity_type, tariff_type, tariff_id, channels,
+            dates=DATES, customer_id="", ufmid=370):
+    """An EntityPerformanceData whose long performance_data_frame carries one row
+    per consumption_type with a forecast Series (the shape to_forecast_fact molds)."""
+    rows = [{"consumption_type": ct, "forecast": pd.Series(vals, index=dates),
+             "RMSE": 1.0, "MAE": 1.0, "R2": 0.5} for ct, vals in channels.items()]
+    return EntityPerformanceData(
+        entity_id=entity_id, entity_type=entity_type, tariff_type=tariff_type,
+        customer_id=customer_id, forecast_method_name="SARIMA",
+        user_forecast_method_id=ufmid, performance_data_frame=pd.DataFrame(rows),
+        tariff_id=tariff_id)
+
+
+# ── 1. successful formatting ─────────────────────────────────────────────────────
+
+def test_to_forecast_fact_write_shape():
+    res = ForecastResults("SARIMA", [
+        _entity("0404.GENWHE", "", "Consumption", "BUSS123",
+                {"PeakConsumption": [1, 2, 3], "StandardConsumption": [4, 5, 6]}),
+    ])
+    ff = res.to_forecast_fact()
+    for col in ("PodID", "UserForecastMethodID", "CustomerID", "ReportingMonth",
+                "PeakConsumption", "StandardConsumption"):
+        assert col in ff.columns, f"missing ForecastFact column {col!r}"
+    assert "EntityID" not in ff.columns                  # no alias column on the PodID contract
+    assert "EntityType" not in ff.columns
+    assert "TariffType" not in ff.columns                # removed from ForecastFact schema
+    assert "TariffID" not in ff.columns
+    assert len(ff) == 3                                  # one row per ReportingMonth
+    assert (ff["PodID"] == "0404.GENWHE").all()         # entity_id IS the PodID
+    assert (ff["UserForecastMethodID"] == 370).all()
+    assert list(ff["PeakConsumption"]) == [1.0, 2.0, 3.0]
+    assert list(ff.sort_values("ReportingMonth")["ReportingMonth"]) == list(DATES)
+
+
+def test_to_forecast_fact_row_count_and_pods():
+    res = ForecastResults("SARIMA", [
+        _entity("E1", "", "Consumption", "T1", {"PeakConsumption": [1, 2, 3]}),
+        _entity("E2", "", "Consumption", "T2", {"PeakConsumption": [7, 8, 9]}),
+    ])
+    ff = res.to_forecast_fact()
+    assert len(ff) == 6                                  # 2 pods x 3 periods
+    assert set(ff["PodID"]) == {"E1", "E2"}
+
+
+# ── 2. missing / invalid fields ──────────────────────────────────────────────────
+
+def test_to_forecast_fact_skips_invalid_entities():
+    good = _entity("E1", "", "Consumption", "T1", {"PeakConsumption": [1, 2, 3]})
+    empty_pdf = EntityPerformanceData("E2", "", "Consumption", "", "SARIMA", 370, pd.DataFrame(), 0)
+    none_pdf = EntityPerformanceData("E3", "", "Consumption", "", "SARIMA", 370, None, 0)
+    no_ct_col = EntityPerformanceData("E4", "", "Consumption", "", "SARIMA", 370,
+                                      pd.DataFrame({"value": [1.0]}), 0)
+    res = ForecastResults("SARIMA", [good, empty_pdf, none_pdf, no_ct_col])
+    ff = res.to_forecast_fact()
+    assert set(ff["PodID"]) == {"E1"}                    # invalid pods skipped, not fatal
+
+
+def test_to_forecast_fact_empty_results_returns_empty_df():
+    ff = ForecastResults("SARIMA", []).to_forecast_fact()
+    assert isinstance(ff, pd.DataFrame) and ff.empty
+
+
+# ── 3. persistence behaviour: the unbundled path performs NO db write ────────────
+
+def test_unbundled_path_never_writes_to_db():
+    """run_unbundled + to_forecast_fact produce write-ready rows without ever
+    persisting — the unbundled Ermelo path is display-only (DoD #2). After the legacy
+    bundled stack was retired the repo has no DB-write boundary to reach at all, so
+    running the loop end to end simply cannot write."""
+    from models.algorithms import unbundled
+
+    data = pd.DataFrame({
+        "PodID": ["E1"] * 3, "TariffType": ["Consumption"] * 3,
+        "CustomerID": ["C1"] * 3, "TariffID": [1] * 3,
+        "ReportingMonth": DATES, "PeakConsumption": [10.0, 11.0, 12.0],
+    })
+    model = types.SimpleNamespace(
+        dataset=types.SimpleNamespace(ufm_config=types.SimpleNamespace(
+            forecast_method_name="SARIMA", user_forecast_method_id=370)),
+        config=types.SimpleNamespace(log=False))
+
+    def _stub_forecast(unit, ufm_config, m):
+        return _entity(unit.entity_id, unit.entity_type, unit.tariff_type, "T1",
+                       {"PeakConsumption": [1, 2, 3]})
+
+    with patch.object(unbundled, "get_unbundled_predictive_data", return_value=data), \
+         patch.object(unbundled, "validate_series", return_value=(True, "ok")):
+        res = unbundled.run_unbundled(model, spark=None, forecast_for_entity=_stub_forecast)
+        ff = res.to_forecast_fact()
+
+    assert not ff.empty                                  # it DID produce write-ready rows
+    assert (ff["PodID"] == "E1").all()

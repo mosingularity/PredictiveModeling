@@ -1,81 +1,21 @@
 # config.yaml
-current_env: local  # Change to 'databricks' in production
-debug: false
-visualize: false
 
-# Feature toggle for SARIMAX with exogenous variables
-use_feature_engineering: false
-# lag_hours: [168, 336, 504, 672]
-lag: [1, 2, 3, 6, 12, 24, 36]
-train_mode: recursive
-fail_on_invalid_lags: false
-use_extended_calendar_features: true
-add_calendar_features: true
-save: false
-
-
-user: "${DB_USER}"
-password: "${DB_PASSWORD}"
-write_url: "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net;databaseName=FortrackDB"
-driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
-
+# Per-environment SQL Server host — selected by the ENV var (get_environment_config).
 DEV:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-dev-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
-
 UAT:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-uat-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
-
 QA:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-qa-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
-
 PROD:
   server: "jdbc:sqlserver://fortrack-maz-sdb-san-prod-01.database.windows.net"
   database: "FortrackDB"
-  profiling_cfg:
-    engine: sqlserver
 
-LOCAL:
-  profiler:
-    driver: "{MariaDB ODBC 3.2 Driver}"
-    host: "localhost"
-    port: 3306
-    user: "root"
-    password: "*"
-    database: "PLAYGROUND"
-  profiling_cfg:
-    engine: sqlserver        # or sqlserver
-    datasource: UAT        # targets DEV data while profiling locally
-
-profiling:
-  enabled: false
-  log_errors: false
-  app_name: forecasting-engine
-
-  categories: # https://www.notion.so/YAML-Based-Validation-System-for-Profiling-Categories-1ed650487ec480a0b9e8d6046a249e36?pvs=4#1ed650487ec480bebc92ca52fe76bb6e
-    - dataset # Handles application-level logic (e.g., validating results, converting to objects)
-    - database_call # Handles the database query logic
-    - extract_transform_and_load
-    - feature_engineering
-    - model_training
-    - forecasting
-    - evaluation
-    - config
-    - validation
-    - orchestration
-    - storage
-    - error_handling
-
-
-# Read data from SQL Server
+# Table names — kept per request, though no live config["tables"] read exists
+# (model files hardcode "dbo.ForecastFact" / "dbo.StatisticalPerformanceMetrics").
 tables:
   table_DBT: "dbo.DataBrickTasks"
   table_UFM: "dbo.UserForecastMethod"
@@ -85,56 +25,16 @@ tables:
   performance_metrics_table: "dbo.StatisticalPerformanceMetrics"
   target_table_name: "dbo.ForecastFact"
 
-
-selected_columns: ["OffPeakConsumption","PeakConsumption","StandardConsumption","Block1Consumption","Block2Consumption","Block3Consumption","Block4Consumption","NonTOUConsumption"]
+# Consumption channels (model.config.consumption_types).
 consumption_types: ["OffPeakConsumption","PeakConsumption","StandardConsumption","Block1Consumption","Block2Consumption","Block3Consumption","Block4Consumption","NonTOUConsumption"]
-mode: "train"
-log: false
-# This field may come from the database (and may be an empty string)
-model_parameters: ""
 
-# Default hyperparameters for each model if the incoming value is null.
+# Log-transform toggle (forecast_model.config.log).
+log: false
+
+# Fallback hyperparameters when the UFM's Parameters field is null/empty
+# (hyperparameters.get_model_hyperparameters).
 model_defaults:
   arima: "(3,3,3)"
   sarima: "(1,1,1)(1,1,1,4)"
   randomforest: "(50,10,2,1,3,true)"
   xgboost: "(5,2,0.3,0.3,0.8)"
-
-# Cross-validation configuration:
-cv_config:
-  n_splits: 3
-  shuffle: true
-  random_state: 42
-
-# Pipeline configurations for each model.
-pipeline_config_randomforest:
-  imputer_strategy: "mean"
-  rfecv:
-    step: 0.1
-    cv: 3
-    scoring: "neg_mean_absolute_error"
-
-pipeline_config_xgboost:
-  imputer_strategy: "mean"
-  rfecv:
-    step: 0.1
-    cv: 3
-    scoring: "neg_mean_absolute_error"
-
-# Hyperparameter grids for GridSearchCV
-xgboost_grid:
-  n_estimators: [100, 200, 300]
-  max_depth: [3, 5, 7, 10]
-  learning_rate: [0.01, 0.1, 0.3]
-  subsample: [0.8, 0.9, 1.0]
-  colsample_bytree: [0.7, 0.8, 1.0]
-  random_state: [42]
-
-randomforest_grid:
-  n_estimators: [50, 100, 150]
-  max_depth: [null, 10, 20]
-  min_samples_split: [2, 4, 6]
-  min_samples_leaf: [1, 2, 4]
-  n_jobs: 3
-  bootstrap: False
-  random_state: [42]

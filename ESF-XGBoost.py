@@ -1,15 +1,17 @@
 # Databricks notebook source
+
+# COMMAND ----------
+
 import sys
 import logging
 from py4j.protocol import Py4JNetworkError
 from socket import error as SocketError, timeout as SocketTimeout
-from config_loader import load_config 
+from config_loader import load_config
 sys.path.append("/Workspace/Shared")
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.WARNING)
-logging.getLogger("py4j.clientserver").setLevel(logging.WARNING)
+logging.basicConfig(level=logging.INFO)
 import os
-os.environ["ENV"] = "PROD"
+from notebook_bootstrap import bootstrap_run, run_forecast, render_forecast
 
 # COMMAND ----------
 
@@ -17,10 +19,6 @@ import mlflow
 mlflow.autolog(disable=True)
 mlflow.statsmodels.autolog(disable=True)
 
-# COMMAND ----------
-
-# MAGIC %load_ext autoreload
-# MAGIC %autoreload 2
 
 # COMMAND ----------
 
@@ -28,72 +26,38 @@ try:
     from pyspark.sql import SparkSession
     from pyspark.dbutils import DBUtils
     from utils.dbutils_singleton import set_dbutils
-    from config_loader import load_config  # your existing config loader module
+    from config_loader import load_config
     from data.dataset import ForecastDataset
-    from profiler.profiler_run import run_context
-    from programs.pipeline import ForecastPipeline
+    logger.info("✅ Core imports OK (pyspark, ForecastDataset).")
 except (ConnectionResetError, SocketError, SocketTimeout) as e:
-        logger.error(
-            f"❌ Connection error during Spark operation: {type(e).__name__} — {str(e)}"
-        )
+    logger.error(f"❌ Connection error during import: {type(e).__name__} — {e}")
+    raise
 except Py4JNetworkError as e:
-    logger.error(
-        f"🔥 Py4JNetworkError during Spark operation:\n"
-    )
+    logger.error(f"🔥 Py4JNetworkError during import: {type(e).__name__} — {e}")
+    raise
 except Exception as e:
-    # Catch absolutely everything else
-    logger.error(
-        f"🚨 Unexpected error during Spark operation:\n"
-    )
+    logger.error(f"🚨 Import failed — pipeline/dataset unavailable: {type(e).__name__} — {e}")
+    raise
 
 # COMMAND ----------
 
-config = load_config("config.yaml") # Forecast config
+config = load_config("config.yaml")
 
 # COMMAND ----------
 
-def init_spark():
-    spark = SparkSession.builder.appName("Energy Consumption Prediction").getOrCreate()
-    spark.sparkContext.setLogLevel("ERROR")
-    dbutils = DBUtils(spark)
-    return spark, dbutils
-
+from models.algorithms.tree_algorithms.xgb import forecast_xgb_unbundled
+from models.algorithms.bundled import run_bundled
+forecasters = {"unbundled": forecast_xgb_unbundled, "bundled": run_bundled}
+spark, dataset = bootstrap_run(2, "XGBoost", forecasters, config)
 
 # COMMAND ----------
 
-spark, dbutils = init_spark()
-set_dbutils(dbutils) 
-databrick_task_id = int(dbutils.widgets.get("DatabrickTaskID"))
-databrick_task_id
-
+dataset.ufm_config
 
 # COMMAND ----------
 
-from data.dataset import ForecastDataset
+result = run_forecast(dataset, spark, config, forecasters)
 
 # COMMAND ----------
 
-dataset = ForecastDataset(databrick_task_id, spark)
-
-# COMMAND ----------
-
-dataset.load_data()
-
-# COMMAND ----------
-
-forecast_range = dataset.define_forecast_range()
-
-# COMMAND ----------
-
-from programs.pipeline import ForecastPipeline
-
-# COMMAND ----------
-
-pipeline = ForecastPipeline(dataset=dataset,config=config)
-
-# COMMAND ----------
-
-pipeline.run(spark)
-
-# COMMAND ----------
-
+render_forecast(result)

@@ -1,2 +1,54 @@
 python library/
 databricks_support/
+# Local environment overrides — never commit
+.env
+.env.*
+!.env.example
+/env
+illuminate-output/
+demos/
+# VS Code workspace state — local dev only (the code runs directly / on Databricks)
+.vscode/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Local conda/micromamba envs accidentally created in-tree
+dbx-connect/
+
+# Generated content-addressed results packs (results-analysis)
+results_packs/
+
+# Local workspace, planning, and assistant scratch — never commit
+.claude/
+.sixth/
+learning/
+databricks-e2e/
+unbundled-modelling/
+ci-cd-ado/
+
+# Real-data fixtures — derived from live DB calls; never commit customer data.
+# Databricks runs against the real DB; these CSVs are local-dev/QA artifacts only.
+data/fixtures/Results*.csv
+data/unbundled_real_ermelo/
+
+# Coverage output
+.coverage
+
+# Playwright MCP session artifacts (screenshots, snapshots)
+.playwright-mcp/
+podid-dashboard-*.png
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+
+# Disposable evidence code (demonstrate skill) — figures live in docs/evidence/
+/evidence/
+
+# Evidence records and the bundle-forecasting plan scope (plans, MASTER_PLAN,
+# scratch figures) — working/planning material, not shipped code. Kept locally
+# as reference, never committed.
+/docs/
+/bundle-forecasting/

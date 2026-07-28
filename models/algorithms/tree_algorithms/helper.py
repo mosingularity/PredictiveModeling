@@ -1,13 +1,20 @@
-from typing import Union
-from types import SimpleNamespace
 import logging
-from statsmodels.tsa.seasonal import STL
-from sklearn.ensemble import RandomForestRegressor
-import matplotlib.pyplot as plt
+from types import SimpleNamespace
+from typing import Union
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestRegressor
+from statsmodels.tsa.seasonal import STL
 from xgboost import XGBRegressor
+
+from data.dml import get_forecast_range
+from evaluation.performance import PodIDPerformanceData
+from hyperparameters import get_model_hyperparameters
+from models.algorithms.helper import _collect_metrics
+from models.algorithms.utilities import evaluate_predictions, process_reporting_months
+from validation.input_checks import invalid_forecast_horizon, invalid_length, invalid_series
+from validation.metadata import get_error_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +44,8 @@ def stl_decompose(df: pd.DataFrame, target: str, period: int = 12):
         seasonal = stl.seasonal
         deseasoned = y - seasonal
         # collapse guard: STL sometimes overfits when data are short or quirky
-        if deseasoned.std(ddof=1) < 1e-6 or deseasoned.std(ddof=1) < 0.05 * y.std(ddof=1):
+        deseasoned_spread = deseasoned.std(ddof=1)
+        if deseasoned_spread < 1e-6 or deseasoned_spread < 0.05 * y.std(ddof=1):
             seasonal = pd.Series(0.0, index=y.index)
             deseasoned = y.copy()
             stl = SimpleNamespace(seasonal=seasonal)
@@ -182,7 +190,7 @@ def train_xgb(X: pd.DataFrame, y: pd.Series, xgb_params_tuple) -> XGBRegressor:
 def recursive_forecast(
     history_ds: pd.Series,
     stl_obj: STL,
-    rf: Union[RandomForestRegressor | XGBRegressor],
+    rf: Union[RandomForestRegressor, XGBRegressor],
     features: list,
     start: pd.Timestamp,
     end: pd.Timestamp,
@@ -193,7 +201,8 @@ def recursive_forecast(
     Generate multi-step forecasts by feeding back predictions.
     """
     # 1) build map of average seasonal component by calendar month
-    season_map = stl_obj.seasonal.groupby(stl_obj.seasonal.index.month).mean()
+    seasonal_months = stl_obj.seasonal.index.month
+    season_map = stl_obj.seasonal.groupby(seasonal_months).mean()
 
     # 2) keep a running deseasoned series for recursive lags
     history_ds = history_ds.copy()
@@ -227,110 +236,138 @@ def recursive_forecast(
         })
         for lag in yearly_lags:
             row[f"ds_lag{lag}_x_sin"] = row[f"ds_lag{lag}"] * np.sin(2 * np.pi * m / 12)
-        X_pred = pd.DataFrame([row], index=[date])[features]
+        feature_row = pd.DataFrame([row], index=[date])
+        X_pred = feature_row[features]
         ds_pred = rf.predict(X_pred)[0]
         history_ds.loc[date] = ds_pred
         if not history_ds.index.is_monotonic_increasing:
             history_ds = history_ds.sort_index()
         results.append((date, ds_pred + seasonal))
-    return pd.DataFrame(results, columns=["date","forecast"]).set_index("date")
+    forecast_frame = pd.DataFrame(results, columns=["date", "forecast"])
+    return forecast_frame.set_index("date")
 
-def plot_forecast(pod_df: pd.DataFrame, fc_df: pd.DataFrame, consumption_type: str, end_fc: pd.Timestamp):
-    plt.figure(figsize=(10, 4))
-    plt.plot(pod_df.index, pod_df[consumption_type], label="Historical")
-    plt.plot(fc_df.index, fc_df["forecast"], "--", label="Forecast")
-    plt.title(f"{consumption_type}: {pod_df.index.min().date()} â†’ {end_fc}")
-    plt.xlabel("ReportingMonth")
-    plt.ylabel(consumption_type)
-    plt.legend()
-    plt.show()
 
-def plot_train_test(
-    train_df: pd.DataFrame,
-    test_df: pd.DataFrame,
-    y_col: str,
-    train_pred: np.ndarray,
-    test_pred: np.ndarray
-):
+def forecast_pod_with_tree(
+    df: pd.DataFrame,
+    customer_id: str,
+    pod_id: str,
+    consumption_types: list,
+    ufm_config,
+    *,
+    method_key: str,
+    train_fn,
+    report_validation_error,
+    base_lags: list = [1, 2, 3, 6],
+    base_windows: list = [3, 6],
+    test_months: int = 3,
+) -> PodIDPerformanceData:
+    """Forecast one pod with a tree model: engineer features, fit, backtest, and
+    forecast the horizon, per consumption type.
+
+    Shared by RandomForest and XGBoost, which differ only in ``method_key`` (the
+    hyperparameter lookup key) and ``train_fn`` (:func:`train_rf` / :func:`train_xgb`).
+    ``report_validation_error`` is passed in rather than imported here so each caller's
+    own module-level reference stays the one tests patch (``patch.object(rf, ...)`` /
+    ``patch.object(xgb, ...)``).
     """
-    Plot actual vs predicted for train and test splits.
-    """
-    fig, ax = plt.subplots(1,2,figsize=(12,4))
-    ax[0].plot(train_df.index, train_df[y_col], label="Actual")
-    ax[0].plot(train_df.index, train_pred, "--", label="Pred")
-    ax[0].set_title("Train Set")
+    data = []
+    forecast_horizon = get_forecast_range(ufm_config)
+    start_fc = ufm_config.start_date
+    end_fc = ufm_config.end_date
 
-    ax[1].plot(test_df.index, test_df[y_col], label="Actual")
-    ax[1].plot(test_df.index, test_pred, "--", label="Pred")
-    ax[1].set_title("Test Set")
+    for consumption_type in consumption_types:
+        pod_df = df[df["PodID"] == pod_id].sort_index()
+        pod_df = process_reporting_months(pod_df)
 
-    for a in ax:
-        a.set_ylabel(y_col)
-        a.legend()
-    plt.tight_layout()
-    plt.show()
+        if invalid_series(pod_id, pod_df[consumption_type], consumption_type):
+            forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
+            row = _collect_metrics(pod_id, customer_id, consumption_type, forecast,
+                                   validation_reason="all-zero / flat series")
+            data.append(row)
+            continue
 
+        if invalid_length(pod_df[consumption_type], consumption_type):
+            forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
+            row = _collect_metrics(pod_id, customer_id, consumption_type, forecast,
+                                   validation_reason="series too short")
+            data.append(row)
+            continue
 
+        if invalid_forecast_horizon(pod_id, pod_df[consumption_type], consumption_type, forecast_horizon):
+            forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
+            row = _collect_metrics(pod_id, customer_id, consumption_type, forecast,
+                                   validation_reason="gap too large")
+            data.append(row)
+            continue
 
+        forecast_horizon_months = ((end_fc.year - pod_df.index.max().year) * 12 +
+                                   (end_fc.month - pod_df.index.max().month))
+        year_lags = [12 * i for i in range(1, forecast_horizon_months // 12 + 1)]
+        lags = base_lags + year_lags
 
+        year_windows = [12 * i for i in range(1, forecast_horizon_months // 12 + 1)]
+        windows = base_windows + year_windows
 
+        pod_df, feature_cols, stl_obj, history_series = engineer_data(pod_df, consumption_type, lags, windows)
 
-def naive_last_value_forecast(
-    full_series: pd.Series,
-    train_fraction: float,
-    forecast_horizon: pd.DatetimeIndex
-) -> (pd.Series, dict):
-    """
-    Splits full_series into train/test by `train_fraction`, computes
-    a â€œlastâ€valueâ€ forecast for the test period and future horizon.
-    Returns:
-      - in_sample_baseline: pd.Series indexed by the test portion
-      - future_baseline: pd.Series indexed by forecast_horizon
-    Also returns baseline_metrics = {"MAE":..., "RMSE":..., "R2":...} computed on the test portion.
-    """
+        train_df, test_df = split_train_test(pod_df, test_months)
+        if train_df.empty or test_df.empty:
+            logger.warning(
+                f"🚫 Not enough data after split for {consumption_type} @ Pod {pod_id}. Skipping."
+            )
+            forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
+            row = _collect_metrics(pod_id, customer_id, consumption_type, forecast,
+                                   validation_reason="insufficient data after split")
+            data.append(row)
+            continue
+        X_train, y_train = train_df[feature_cols], train_df["deseasoned"]
+        X_test = test_df[feature_cols]
 
-    # 1) Chronological split
-    n = len(full_series)
-    test_size = max(int(n * (1 - train_fraction)), 1)
-    train_end = n - test_size
+        params_tuple = get_model_hyperparameters(method_key, ufm_config.model_parameters)
+        try:
+            model = train_fn(X_train, y_train, params_tuple)
+        except Exception as model_fit_exception:
+            meta = get_error_metadata("ModelFitFailure", {"exception": str(model_fit_exception)})
+            report_validation_error(log_id=None, error=meta["message"], traceback="", error_type="ModelFitFailure",
+                                   severity=meta["severity"], component=meta["component"],
+                                   entity_id=pod_id)
+            forecast = pd.Series([0] * len(forecast_horizon), index=forecast_horizon)
+            row = _collect_metrics(pod_id, customer_id, consumption_type, forecast,
+                                   validation_reason="model fit failed")
+            data.append(row)
+            continue
 
-    train_series = full_series.iloc[:train_end]
-    test_series = full_series.iloc[train_end:]
+        train_pred_ds = model.predict(X_train)
+        test_pred_ds = model.predict(X_test)
 
-    if train_series.empty:
-        # no training data â†’ baseline is zeros
-        baseline_metrics = {"MAE": 0.0, "RMSE": 0.0, "R2": 0.0}
-        future_baseline = pd.Series(
-            [0.0] * len(forecast_horizon), index=forecast_horizon
+        # re-add seasonality
+        train_pred = train_pred_ds + train_df["seasonal"]
+        test_pred = test_pred_ds + test_df["seasonal"]
+
+        y_test_original = test_df["deseasoned"] + test_df["seasonal"]
+        metrics, baseline_metrics = evaluate_predictions(y_test_original, test_pred)
+
+        # Forecast from a model refit on ALL data (train+test) so the future uses
+        # the most recent months; the train-only model above is kept solely for
+        # the held-out backtest metrics. Mirrors the ARIMA full-data forecast.
+        full_model = train_fn(pod_df[feature_cols], pod_df["deseasoned"], params_tuple)
+        fc_df = recursive_forecast(history_series, stl_obj, full_model,
+                                   feature_cols, start_fc, end_fc,
+                                   lags, windows)
+        future_forecast = fc_df['forecast']
+        # Full-history fitted line (train fit + held-out test) for the solid
+        # "predicted historical" overlay; metrics stay on the held-out test above.
+        in_sample_fit = pd.concat([train_pred, test_pred]).sort_index()
+        row = _collect_metrics(
+            pod_id, customer_id, consumption_type,
+            future_forecast, metrics, baseline_metrics, in_sample=in_sample_fit
         )
-        return pd.Series(dtype=float), future_baseline, baseline_metrics
-
-    last_val = train_series.iloc[-1]
-
-    # 2) Inâ€sample (test) baseline: repeat last_val for each index in test_series
-    in_sample_baseline = pd.Series(
-        [last_val] * len(test_series), index=test_series.index
+        data.append(row)
+    performance_frame = pd.DataFrame(data)
+    return PodIDPerformanceData(
+        pod_id=pod_id,
+        forecast_method_name=ufm_config.forecast_method_name,
+        customer_id=customer_id,
+        user_forecast_method_id=ufm_config.user_forecast_method_id,
+        performance_data_frame=performance_frame
     )
-
-    # 3) Compute baseline metrics on test_series vs. in_sample_baseline
-    mae_baseline = float(mean_absolute_error(test_series.values, in_sample_baseline.values))
-    rmse_baseline = float(np.sqrt(mean_squared_error(test_series.values, in_sample_baseline.values)))
-    # RÂ² of a flatâ€line model: if test_series is constant, define RÂ² = 1.0; else:
-    if np.allclose(test_series.values, last_val):
-        r2_baseline = 1.0
-    else:
-        r2_baseline = float(r2_score(test_series.values, in_sample_baseline.values))
-
-    baseline_metrics = {
-        "MAE": mae_baseline,
-        "RMSE": rmse_baseline,
-        "R2": r2_baseline
-    }
-
-    # 4) Futureâ€horizon baseline: repeat last_val for every date
-    future_baseline = pd.Series(
-        [last_val] * len(forecast_horizon), index=forecast_horizon
-    )
-
-    return in_sample_baseline, future_baseline, baseline_metrics
-
